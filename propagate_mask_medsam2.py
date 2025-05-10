@@ -1,5 +1,7 @@
 import numpy as np
 import os
+import cv2
+import matplotlib.pyplot as plt
 from torch.nn.functional import sigmoid
 
 from sam2.build_sam import build_sam2_video_predictor
@@ -224,3 +226,61 @@ class CustomMEDSAM2():
                 print(f"No masks found for frame {t}")
 
         return fused_masks
+
+def combine_class_masks(indiv_class_masks_list, output_dir=None, show=True):
+    """
+    Combine multiple class masks into one mask. Different colors represent different classes.
+    Inputs:
+        indiv_class_masks_list: list containing a dictionary of masks for each of n classes segmented
+        output_dir: directory to write the output images to
+        show: if True, show combined class masks
+    """
+
+    os.makedirs(output_dir, exist_ok=True) if output_dir else None
+
+    shared_keys = set()
+    for d in indiv_class_masks_list:
+        shared_keys.update(d.keys())
+    shared_keys = sorted(shared_keys)
+
+    for base_name in shared_keys:
+        masks = []
+        bins = []
+        try:
+            number = int(base_name[1:5])
+        except ValueError:
+            print(f"Skipping invalid file name: {base_name}")
+            continue
+
+        for i, class_mask_dict in enumerate(indiv_class_masks_list):
+            masks.append(class_mask_dict.get(base_name, np.zeros_like(next(iter(class_mask_dict.values())))))
+
+        for i in range(len(masks)):
+            # Binarize masks
+            bins.append((masks[i] > 0).astype(np.uint8))
+
+        # Resolve conflicts: first class takes priority
+        for i in range(len(bins)-1, 0, -1):
+            bins[i][bins[i-1] == 1] = 0
+
+        h, w = bins[0].shape
+        rgb_mask = np.zeros((h, w, 3), dtype=np.uint8)
+
+        num_classes = len(bins)
+        cmap = plt.get_cmap('Set3')
+        colors = (np.array([cmap(i)[:3] for i in range(num_classes)]) * 255).astype(np.uint8)
+
+        for class_idx, binary_mask in enumerate(bins):
+            color = colors[class_idx]
+            rgb_mask[binary_mask == 1] = color
+
+        if output_dir:
+            out_path = os.path.join(output_dir, base_name + '.png')
+            cv2.imwrite(out_path, cv2.cvtColor(rgb_mask, cv2.COLOR_RGB2BGR))
+
+        if show:
+            plt.figure(figsize=(5, 5))
+            plt.imshow(rgb_mask)
+            plt.title(base_name)
+            plt.axis('off')
+            plt.show()
