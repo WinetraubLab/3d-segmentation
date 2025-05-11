@@ -76,8 +76,7 @@ class CustomMEDSAM2():
                             obj_id=obj_id,
                             mask=mask.squeeze(),
                         )
-            return video_segments_f, video_logits_f
-        
+        return video_segments_f, video_logits_f
 
     
     def _propagate_backward(self, images_to_segment_path, end_mask,  start_keyframe_idx, end_keyframe_idx, class_id):
@@ -144,6 +143,7 @@ class CustomMEDSAM2():
             coco_path: COCO annotation file path 
         Returns:
             fused_masks (dict): Predicted mask for each image
+            frame_names (list): list of image file names, in order
         """
 
         frame_names = import_data_from_roboflow.list_all_images(images_to_segment_path)
@@ -157,6 +157,7 @@ class CustomMEDSAM2():
         video_logits_f = {}
         video_segments_b = {}
         video_logits_b = {}
+        fused_masks = {}
 
         for i in range(0, len(keyframe_indices)-1):
             start_idx = keyframe_indices[i]
@@ -178,9 +179,9 @@ class CustomMEDSAM2():
             video_segments_b.update(segments)
             video_logits_b.update(logits)
 
-        fused_masks = self.merge_bidirectional_masks([start_idx, end_idx], video_logits_f, video_logits_b)
+            fused_masks.update(self.merge_bidirectional_masks([start_idx, end_idx], video_logits_f, video_logits_b))
 
-        return fused_masks
+        return fused_masks, frame_names
 
 
     def merge_bidirectional_masks(self, keyframe_indices, video_logits_f, video_logits_b, thresh=0.5):
@@ -227,7 +228,7 @@ class CustomMEDSAM2():
 
         return fused_masks
 
-def combine_class_masks(indiv_class_masks_list, output_dir=None, show=True):
+def combine_class_masks(indiv_class_masks_list, frame_names, output_dir=None, show=True):
     """
     Combine multiple class masks into one mask. Different colors represent different classes.
     Inputs:
@@ -242,22 +243,18 @@ def combine_class_masks(indiv_class_masks_list, output_dir=None, show=True):
     for d in indiv_class_masks_list:
         shared_keys.update(d.keys())
     shared_keys = sorted(shared_keys)
+    print(shared_keys)
 
-    for base_name in shared_keys:
+    for frame_idx in shared_keys:
         masks = []
         bins = []
-        try:
-            number = int(base_name[1:5])
-        except ValueError:
-            print(f"Skipping invalid file name: {base_name}")
-            continue
 
         for i, class_mask_dict in enumerate(indiv_class_masks_list):
-            masks.append(class_mask_dict.get(base_name, np.zeros_like(next(iter(class_mask_dict.values())))))
+            masks.append(class_mask_dict.get(frame_idx, np.zeros_like(next(iter(class_mask_dict.values())))))
 
         for i in range(len(masks)):
             # Binarize masks
-            bins.append((masks[i] > 0).astype(np.uint8))
+            bins.append((list(masks[i].values())[0] > 0).astype(np.uint8).squeeze())
 
         # Resolve conflicts: first class takes priority
         for i in range(len(bins)-1, 0, -1):
@@ -275,12 +272,13 @@ def combine_class_masks(indiv_class_masks_list, output_dir=None, show=True):
             rgb_mask[binary_mask == 1] = color
 
         if output_dir:
-            out_path = os.path.join(output_dir, base_name + '.png')
+            out_path = os.path.join(output_dir, frame_names[frame_idx] + '.png')
             cv2.imwrite(out_path, cv2.cvtColor(rgb_mask, cv2.COLOR_RGB2BGR))
 
         if show:
             plt.figure(figsize=(5, 5))
             plt.imshow(rgb_mask)
-            plt.title(base_name)
+            plt.title(frame_names[frame_idx])
             plt.axis('off')
             plt.show()
+
