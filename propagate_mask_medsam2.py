@@ -4,7 +4,7 @@ import cv2
 import matplotlib.pyplot as plt
 from torch.nn.functional import sigmoid
 
-from sam2.build_sam import build_sam2_video_predictor
+from MedSAM2.sam2.build_sam import build_sam2_video_predictor
 import import_data_from_roboflow
 
 class CustomMEDSAM2():
