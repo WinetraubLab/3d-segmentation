@@ -35,6 +35,8 @@ class CustomMEDSAM2():
         """
         Forward pass for segmentation prediction given a start mask and end point.
         """
+        print(f"\n\nForwards from {start_keyframe_idx} to {end_keyframe_idx}")
+
         predictor = self.initialize_segmentation_model()
         inference_state = predictor.init_state(video_path=images_to_segment_path, async_loading_frames=False)
 
@@ -83,6 +85,7 @@ class CustomMEDSAM2():
         """
         Backwards pass for segmentation prediction given a start mask and end point.
         """
+        print(f"\n\nBackwards from {start_keyframe_idx} to {end_keyframe_idx}")
         predictor = self.initialize_segmentation_model()
         inference_state = predictor.init_state(video_path=images_to_segment_path, async_loading_frames=False)
 
@@ -243,7 +246,6 @@ def combine_class_masks(indiv_class_masks_list, frame_names, output_dir=None, sh
     for d in indiv_class_masks_list:
         shared_keys.update(d.keys())
     shared_keys = sorted(shared_keys)
-    print(shared_keys)
 
     for frame_idx in shared_keys:
         masks = []
@@ -281,4 +283,3 @@ def combine_class_masks(indiv_class_masks_list, frame_names, output_dir=None, sh
             plt.title(frame_names[frame_idx])
             plt.axis('off')
             plt.show()
-
