@@ -35,8 +35,6 @@ class CustomMEDSAM2():
         """
         Forward pass for segmentation prediction given a start mask and end point.
         """
-        print(f"\n\nForwards from {start_keyframe_idx} to {end_keyframe_idx}")
-
         predictor = self.initialize_segmentation_model()
         inference_state = predictor.init_state(video_path=images_to_segment_path, async_loading_frames=False)
 
@@ -85,7 +83,6 @@ class CustomMEDSAM2():
         """
         Backwards pass for segmentation prediction given a start mask and end point.
         """
-        print(f"\n\nBackwards from {start_keyframe_idx} to {end_keyframe_idx}")
         predictor = self.initialize_segmentation_model()
         inference_state = predictor.init_state(video_path=images_to_segment_path, async_loading_frames=False)
 
