@@ -162,7 +162,7 @@ class CustomMEDSAM2():
             start_idx = keyframe_indices[i]
             end_idx = keyframe_indices[i+1]
 
-            start_mask = import_data_from_roboflow.get_mask(os.join(images_to_segment_path,frame_names[start_idx]), coco_path, class_id)
+            start_mask = import_data_from_roboflow.get_mask(os.path.join(images_to_segment_path,frame_names[start_idx]), coco_path, class_id)
             start_mask = np.array(start_mask).astype(np.uint8)
 
             # forward pass
@@ -170,7 +170,7 @@ class CustomMEDSAM2():
             video_segments_f.update(segments)
             video_logits_f.update(logits)
 
-            end_mask = import_data_from_roboflow.get_mask(os.join(images_to_segment_path,frame_names[end_idx]), coco_path, class_id)
+            end_mask = import_data_from_roboflow.get_mask(os.path.join(images_to_segment_path,frame_names[end_idx]), coco_path, class_id)
             end_mask = np.array(start_mask).astype(np.uint8)
 
             # backwards
