@@ -73,7 +73,21 @@ def get_keyframe_indices(coco_path, images_to_segment_path, class_id):
     keyframe_indices = sorted(list(keyframe_indices))
     return keyframe_indices
 
-def clahe_normalize(image):
+def preprocess_images(original_images_path, preprocessed_images_path):
+    """
+    Apply CLAHE normalization and save new images.
+    Inputs:
+        original_images_path: directory containing original images.
+        preprocessed_images_path: where to save preprocessed images.
+    """
+    os.makedirs(preprocessed_images_path, exist_ok=True)
+    for root, _, files in os.walk(original_images_path):
+        for file in files:
+            fpath = os.path.join(root, file)
+            im = _clahe_normalize(cv2.imread(fpath))
+            cv2.imwrite(os.path.join(preprocessed_images_path, file), im)
+
+def _clahe_normalize(image):
     """
     CLAHE normalization helps improve contrast for segmentation.
     Inputs:
@@ -128,7 +142,7 @@ def init_from_roboflow(workspace_name, project_name, api_key):
 
 def init_from_folder(folder_path):
     """
-    Initialize from a folder containing images and COCO-style annotations.
+    Initialize from a folder containing COCO-style annotations.
 
     Inputs:
         folder_path: path to folder containing images and COCO-style annotation.
@@ -164,7 +178,8 @@ def get_image(image_name, parent_directory):
     for root, _, files in os.walk(parent_directory):
         for file in files:
             if image_name in file:
-                return os.path.join(root, file)
+                fpath = os.path.join(root, file)
+                return _clahe_normalize(cv2.imread(fpath))
     
     raise FileNotFoundError(f"No matching images for {image_name} were found under {parent_directory}.")
 
