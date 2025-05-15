@@ -134,7 +134,7 @@ class CustomMEDSAM2():
         return video_segments_b, video_logits_b
 
 
-    def propagate_sequence(self, images_to_segment_path, class_id, coco_path):
+    def propagate_sequence(self, class_id):
         """
         Propagate masks from start_idx to end_idx (inclusive) using MedSAM2, for specified class.
         Inputs:
@@ -145,9 +145,10 @@ class CustomMEDSAM2():
             fused_masks (dict): Predicted mask for each image
             frame_names (list): list of image file names, in order
         """
+        images_to_segment_path = import_data_from_roboflow.IMAGES_TO_SEGMENT_PATH
 
-        frame_names = import_data_from_roboflow.list_all_images(images_to_segment_path)
-        keyframe_indices = import_data_from_roboflow.get_keyframe_indices(coco_path, images_to_segment_path, class_id)
+        frame_names = import_data_from_roboflow.list_all_images()
+        keyframe_indices = import_data_from_roboflow.get_keyframe_indices(class_id)
         num_frames = len(frame_names)
 
         start_idx = 0
@@ -163,7 +164,7 @@ class CustomMEDSAM2():
             start_idx = keyframe_indices[i]
             end_idx = keyframe_indices[i+1]
 
-            start_mask = import_data_from_roboflow.get_mask(os.path.join(images_to_segment_path,frame_names[start_idx]), coco_path, class_id)
+            start_mask = import_data_from_roboflow.get_mask(frame_names[start_idx], class_id)
             start_mask = np.array(start_mask).astype(np.uint8)
 
             # forward pass
@@ -171,7 +172,7 @@ class CustomMEDSAM2():
             video_segments_f.update(segments)
             video_logits_f.update(logits)
 
-            end_mask = import_data_from_roboflow.get_mask(os.path.join(images_to_segment_path,frame_names[end_idx]), coco_path, class_id)
+            end_mask = import_data_from_roboflow.get_mask(frame_names[end_idx], class_id)
             end_mask = np.array(start_mask).astype(np.uint8)
 
             # backwards
