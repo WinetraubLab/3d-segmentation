@@ -31,7 +31,7 @@ class CustomMEDSAM2():
         )
         return predictor
 
-    def predict_mask(self, predictor, inference_state, frame_idx, prompt_mask):
+    def predict_mask(self, predictor, inference_state, frame_idx, prompt_mask, reverse=False):
         """
         Given an image and the input prompting mask, predict the mask for the image.
         Inputs:
@@ -45,7 +45,7 @@ class CustomMEDSAM2():
             if mask is not None and np.any(mask):
                 # Tell model that this frame has already been tracked = refine mask mode
                 if frame_idx not in inference_state["frames_already_tracked"]:
-                    inference_state["frames_already_tracked"][frame_idx] = {"reverse": False}
+                    inference_state["frames_already_tracked"][frame_idx] = {"reverse": reverse}
 
                 predictor.add_new_mask(
                     inference_state=inference_state,
@@ -56,7 +56,7 @@ class CustomMEDSAM2():
 
         # Predict
         for _, out_obj_ids, out_mask_logits in predictor.propagate_in_video(inference_state, start_frame_idx=frame_idx,
-            max_frame_num_to_track=1):
+            max_frame_num_to_track=1, reverse=reverse):
 
             predicted_masks = {
                 out_obj_id: (out_mask_logits[i] > 0.0).cpu().numpy()
@@ -89,14 +89,14 @@ class CustomMEDSAM2():
         video_segments_f[start_keyframe_idx] = start_mask
         
         for out_frame_idx in range(1, end_keyframe_idx-start_keyframe_idx):
-            predicted_mask, predicted_logits = self.predict_mask(predictor, inference_state, out_frame_idx, prompt_mask):
+            predicted_mask, predicted_logits = self.predict_mask(predictor, inference_state, out_frame_idx, video_segments_f[out_frame_idx-1])
 
             video_segments_f[out_frame_idx] = predicted_mask
             video_logits_f[out_frame_idx] = predicted_logits
 
         return video_segments_f, video_logits_f
     
-    def _propagate_backward(self, images_to_segment_path, end_mask,  start_keyframe_idx, end_keyframe_idx, class_id):
+    def _propagate_backward(self, images_to_segment_path, end_mask, start_keyframe_idx, end_keyframe_idx, class_id):
         """
         Backwards pass for segmentation prediction given a start mask and end point.
         """
@@ -112,6 +112,7 @@ class CustomMEDSAM2():
             end_keyframe_idx = start_keyframe_idx
             start_keyframe_idx = tmp
 
+        # add initial mask as conditioning frame
         predictor.add_new_mask(
             inference_state=inference_state,
             frame_idx=end_keyframe_idx,
@@ -119,37 +120,15 @@ class CustomMEDSAM2():
             mask=end_mask,
                 )
         
-        for out_frame_idx, out_obj_ids, out_mask_logits in predictor.propagate_in_video(inference_state, start_frame_idx=end_keyframe_idx,
-            max_frame_num_to_track=end_keyframe_idx-start_keyframe_idx, reverse=True):
-            # Get binary masks
-            per_obj_output_mask = {
-                out_obj_id: (out_mask_logits[i] > 0.0).cpu().numpy()
-                for i, out_obj_id in enumerate(out_obj_ids)
-            }
+        video_segments_b[start_keyframe_idx] = end_mask
 
-            # Save segmentation
-            video_segments_b[out_frame_idx] = per_obj_output_mask
+        for out_frame_idx in range(1, end_keyframe_idx-start_keyframe_idx):
+            predicted_mask, predicted_logits = self.predict_mask(predictor, inference_state, out_frame_idx, video_segments_b[out_frame_idx+1], reverse=True)
 
-            # Store logits
-            video_logits_b[out_frame_idx] = {
-                out_obj_id: out_mask_logits[i].cpu()
-                for i, out_obj_id in enumerate(out_obj_ids)
-            }
+            video_segments_b[out_frame_idx] = predicted_mask
+            video_logits_b[out_frame_idx] = predicted_logits
 
-            # Feed each predicted mask as prompt for the next frame
-            next_frame_idx = out_frame_idx - 1
-
-            if next_frame_idx < end_keyframe_idx:
-                for obj_id, mask in per_obj_output_mask.items():
-                    if mask is not None and np.any(mask):
-                        predictor.add_new_mask(
-                            inference_state=inference_state,
-                            frame_idx=next_frame_idx,
-                            obj_id=obj_id,
-                            mask=mask.squeeze(),
-                        )
         return video_segments_b, video_logits_b
-
 
     def propagate_sequence(self, class_id):
         """
