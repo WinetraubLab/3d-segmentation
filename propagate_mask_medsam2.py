@@ -31,24 +31,22 @@ class CustomMEDSAM2():
         )
         return predictor
 
-    def predict_mask(self, predictor, inference_state, frame_idx, image, prompt_mask):
+    def predict_mask(self, predictor, inference_state, frame_idx, prompt_mask):
         """
         Given an image and the input prompting mask, predict the mask for the image.
         Inputs:
             predictor: segmentation model instance
             inference_state: current tracking/memory state
             frame_idx: int index of frame to predict
-            image: the actual image at frame_idx 
             prompt_mask: prompting mask. dict of {obj_id: binary mask} from previous image frame_idx - 1
         """
         # Set up tracking
         for obj_id, mask in prompt_mask.items():
             if mask is not None and np.any(mask):
-                # Tell model that this frame has already been tracked = refine mask
+                # Tell model that this frame has already been tracked = refine mask mode
                 if frame_idx not in inference_state["frames_already_tracked"]:
                     inference_state["frames_already_tracked"][frame_idx] = {"reverse": False}
 
-                # Add the predicted mask as a refinement
                 predictor.add_new_mask(
                     inference_state=inference_state,
                     frame_idx=frame_idx,
@@ -80,6 +78,7 @@ class CustomMEDSAM2():
         video_logits_f= {}
         video_segments_f = {}
 
+        # add initial mask as conditioning frame
         predictor.add_new_mask(
             inference_state=inference_state,
             frame_idx=start_keyframe_idx,
@@ -87,36 +86,15 @@ class CustomMEDSAM2():
             mask=start_mask,
                 )
         
-        for out_frame_idx, out_obj_ids, out_mask_logits in predictor.propagate_in_video(inference_state, start_frame_idx=start_keyframe_idx,
-            max_frame_num_to_track=end_keyframe_idx-start_keyframe_idx):
-            # Get binary masks
-            per_obj_output_mask = {
-                out_obj_id: (out_mask_logits[i] > 0.0).cpu().numpy()
-                for i, out_obj_id in enumerate(out_obj_ids)
-            }
+        video_segments_f[start_keyframe_idx] = start_mask
+        
+        for out_frame_idx in range(1, end_keyframe_idx-start_keyframe_idx):
+            predicted_mask, predicted_logits = self.predict_mask(predictor, inference_state, out_frame_idx, prompt_mask):
 
-            # Save segmentation
-            video_segments_f[out_frame_idx] = per_obj_output_mask
+            video_segments_f[out_frame_idx] = predicted_mask
+            video_logits_f[out_frame_idx] = predicted_logits
 
-            # Store logits
-            video_logits_f[out_frame_idx] = {
-                out_obj_id: out_mask_logits[i].cpu()
-                for i, out_obj_id in enumerate(out_obj_ids)
-            }
-
-            # Feed each predicted mask as prompt for the next frame
-            next_frame_idx = out_frame_idx + 1
-            if next_frame_idx < end_keyframe_idx:
-                for obj_id, mask in per_obj_output_mask.items():
-                    if mask is not None and np.any(mask):
-                        predictor.add_new_mask(
-                            inference_state=inference_state,
-                            frame_idx=next_frame_idx,
-                            obj_id=obj_id,
-                            mask=mask.squeeze(),
-                        )
         return video_segments_f, video_logits_f
-
     
     def _propagate_backward(self, images_to_segment_path, end_mask,  start_keyframe_idx, end_keyframe_idx, class_id):
         """
