@@ -30,7 +30,46 @@ class CustomMEDSAM2():
             vos_optimized=  True,
         )
         return predictor
-    
+
+    def predict_mask(self, predictor, inference_state, frame_idx, image, prompt_mask):
+        """
+        Given an image and the input prompting mask, predict the mask for the image.
+        Inputs:
+            predictor: segmentation model instance
+            inference_state: current tracking/memory state
+            frame_idx: int index of frame to predict
+            image: the actual image at frame_idx 
+            prompt_mask: prompting mask. dict of {obj_id: binary mask} from previous image frame_idx - 1
+        """
+        # Set up tracking
+        for obj_id, mask in prompt_mask.items():
+            if mask is not None and np.any(mask):
+                # Tell model that this frame has already been tracked = refine mask
+                if frame_idx not in inference_state["frames_already_tracked"]:
+                    inference_state["frames_already_tracked"][frame_idx] = {"reverse": False}
+
+                # Add the predicted mask as a refinement
+                predictor.add_new_mask(
+                    inference_state=inference_state,
+                    frame_idx=frame_idx,
+                    obj_id=obj_id,
+                    mask=mask.squeeze(),
+                )
+
+        # Predict
+        for _, out_obj_ids, out_mask_logits in predictor.propagate_in_video(inference_state, start_frame_idx=frame_idx,
+            max_frame_num_to_track=1):
+
+            predicted_masks = {
+                out_obj_id: (out_mask_logits[i] > 0.0).cpu().numpy()
+                for i, out_obj_id in enumerate(out_obj_ids)
+            }
+            predicted_logits = {
+                out_obj_id: out_mask_logits[i].cpu()
+                for i, out_obj_id in enumerate(out_obj_ids)
+            }
+        return predicted_masks, predicted_logits
+
     def _propagate_forward(self, images_to_segment_path, start_mask, start_keyframe_idx, end_keyframe_idx, class_id):
         """
         Forward pass for segmentation prediction given a start mask and end point.
