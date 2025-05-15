@@ -96,7 +96,7 @@ class CustomMEDSAM2():
 
         return video_segments_f, video_logits_f
     
-    def _propagate_backward(self, images_to_segment_path, end_mask, start_keyframe_idx, end_keyframe_idx, class_id):
+    def _propagate_reverse(self, images_to_segment_path, end_mask, start_keyframe_idx, end_keyframe_idx, class_id):
         """
         Backwards pass for segmentation prediction given a start mask and end point.
         """
@@ -171,8 +171,8 @@ class CustomMEDSAM2():
             end_mask = import_data_from_roboflow.get_mask(frame_names[end_idx], class_id)
             end_mask = np.array(start_mask).astype(np.uint8)
 
-            # backwards
-            segments, logits = self._propagate_backward(images_to_segment_path, end_mask, start_idx, end_idx, class_id)
+            # reverse
+            segments, logits = self._propagate_reverse(images_to_segment_path, end_mask, start_idx, end_idx, class_id)
             video_segments_b.update(segments)
             video_logits_b.update(logits)
 
@@ -215,7 +215,7 @@ class CustomMEDSAM2():
                 for obj_id, logit in video_logits_f[t].items():
                     fused_masks[t][obj_id] = (sigmoid(logit) > thresh).bool().numpy()
             elif t in video_logits_b:
-                print(f"Using backward masks for frame {t}")
+                print(f"Using reverse masks for frame {t}")
                 if t not in fused_masks:
                     fused_masks[t] = {}
                 for obj_id, logit in video_logits_b[t].items():
