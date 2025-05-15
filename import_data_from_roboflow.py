@@ -7,14 +7,56 @@ import json
 from collections import defaultdict
 import numpy as np
 
-def list_all_labels(coco_path):
-    """ 
-    Inputs: 
-        coco_path: path to COCO annotation file containing segmentation info.
-    Returns:
-        class_ids: list of integers representing each unique class in the segmentations.
+COCO_PATH = ""
+IMAGES_TO_SEGMENT_PATH = ""
+
+def init_from_roboflow(workspace_name, project_name, api_key):
     """
-    with open(coco_path, 'r') as f:
+    Downloads the project data from roboflow.
+
+    Inputs:
+        workspace_name: name of the Roboflow workspace.
+        project_name: name of the Roboflow project.
+        api_key: API key
+    Returns:
+        COCO_PATH: path to annotations file
+        class_ids: a list of integers representing each unique class in the dataset segmentations
+    """
+    global COCO_PATH
+    rf = Roboflow(api_key=api_key)
+    project = rf.workspace(workspace_name).project(project_name)
+
+    # Automatically download the latest version
+    versions = project.versions()
+    latest_version = max(versions, key=lambda v: v.version)
+    dataset = latest_version.download("coco-segmentation")
+
+    for root, _, files in os.walk(dataset.location):
+        for file in files:
+            if file.endswith('.coco.json'):
+                COCO_PATH = (os.path.join(root, file))
+
+    class_ids = list_all_labels(COCO_PATH)
+
+    return class_ids
+
+def init_from_folder(folder_path):
+    """
+    Initialize from a folder containing COCO-style annotations.
+
+    Inputs:
+        folder_path: path to folder containing images and COCO-style annotation.
+    Returns:
+        COCO_PATH: path to annotations file
+        class_ids: a list of integers representing each unique class in the dataset segmentations
+    """
+    global COCO_PATH
+    for root, _, files in os.walk(folder_path):
+        for file in files:
+            if file.endswith('.coco.json'):
+                COCO_PATH = (os.path.join(root, file))
+                 
+    with open(COCO_PATH, 'r') as f:
         coco = json.load(f)
 
     # Get all class ids from segmentation annotations
@@ -26,22 +68,42 @@ def list_all_labels(coco_path):
 
     return class_ids
 
-def list_all_images(folder_path):
+def list_all_labels():
+    """ 
+    Inputs: 
+        coco_path: path to COCO annotation file containing segmentation info.
+    Returns:
+        class_ids: list of integers representing each unique class in the segmentations.
+    """
+    global COCO_PATH
+    with open(COCO_PATH, 'r') as f:
+        coco = json.load(f)
+
+    # Get all class ids from segmentation annotations
+    class_ids = {ann['category_id'] for ann in coco['annotations']}
+
+    # Count unique classes
+    num_classes = len(class_ids)
+    print(f"Total number of unique classes: {num_classes}")
+
+    return class_ids
+
+def list_all_images():
     """
     Inputs:
         folder_path: path to folder containing images to list
     Returns:
         image_names: list of filenames ending in png, jpg, jpeg, tif, or tiff, in sorted order.
     """
-
+    global IMAGES_TO_SEGMENT_PATH
     image_names = [
-            p for p in os.listdir(folder_path)
+            p for p in os.listdir(IMAGES_TO_SEGMENT_PATH)
             if os.path.splitext(p)[-1] in [".jpg", ".jpeg", ".JPG", ".JPEG", ".png", ".PNG", ".tif", ".tiff", ".TIF", ".TIFF"]
         ]
     image_names = list(sorted(image_names))
     return image_names
 
-def get_keyframe_indices(coco_path, images_to_segment_path, class_id):
+def get_keyframe_indices(class_id):
     """
     Gets the indices of the annotated segmentations wrt the image stack to segment.
     Inputs:
@@ -51,7 +113,9 @@ def get_keyframe_indices(coco_path, images_to_segment_path, class_id):
     Returns:
         keyframe_indices: Indices of images in the sequence that have annotations for the specified class.
     """
-    with open(coco_path, 'r') as f:
+    global COCO_PATH
+    global IMAGES_TO_SEGMENT_PATH
+    with open(COCO_PATH, 'r') as f:
         coco = json.load(f)
 
     ann_ids = sorted(list({ann["image_id"] for ann in coco["annotations"] if ann['category_id'] == class_id}))
@@ -62,7 +126,7 @@ def get_keyframe_indices(coco_path, images_to_segment_path, class_id):
         if img['id'] in ann_ids
     ]
 
-    frame_names = list_all_images(images_to_segment_path)
+    frame_names = list_all_images(IMAGES_TO_SEGMENT_PATH)
 
     keyframe_indices = {0, len(frame_names)-1}
     for ann in keyframe_filenames:
@@ -80,6 +144,8 @@ def preprocess_images(original_images_path, preprocessed_images_path):
         original_images_path: directory containing original images.
         preprocessed_images_path: where to save preprocessed images.
     """
+    global IMAGES_TO_SEGMENT_PATH
+    IMAGES_TO_SEGMENT_PATH = preprocessed_images_path
     os.makedirs(preprocessed_images_path, exist_ok=True)
     for root, _, files in os.walk(original_images_path):
         for file in files:
@@ -110,89 +176,32 @@ def _clahe_normalize(image):
 
     return image_clahe
 
-def init_from_roboflow(workspace_name, project_name, api_key):
-    """
-    Downloads the project data from roboflow.
-
-    Inputs:
-        workspace_name: name of the Roboflow workspace.
-        project_name: name of the Roboflow project.
-        api_key: API key
-    Returns:
-        COCO_PATH: path to annotations file
-        class_ids: a list of integers representing each unique class in the dataset segmentations
-    """
-    rf = Roboflow(api_key=api_key)
-    project = rf.workspace(workspace_name).project(project_name)
-
-    # Automatically download the latest version
-    versions = project.versions()
-    latest_version = max(versions, key=lambda v: v.version)
-    dataset = latest_version.download("coco-segmentation")
-
-    for root, _, files in os.walk(dataset.location):
-        for file in files:
-            if file.endswith('.coco.json'):
-                COCO_PATH = (os.path.join(root, file))
-
-    class_ids = list_all_labels(COCO_PATH)
-
-    return COCO_PATH, class_ids
-
-
-def init_from_folder(folder_path):
-    """
-    Initialize from a folder containing COCO-style annotations.
-
-    Inputs:
-        folder_path: path to folder containing images and COCO-style annotation.
-    Returns:
-        COCO_PATH: path to annotations file
-        class_ids: a list of integers representing each unique class in the dataset segmentations
-    """
-    for root, _, files in os.walk(folder_path):
-        for file in files:
-            if file.endswith('.coco.json'):
-                COCO_PATH = (os.path.join(root, file))
-                 
-    with open(COCO_PATH, 'r') as f:
-        coco = json.load(f)
-
-    # Get all class ids from segmentation annotations
-    class_ids = {ann['category_id'] for ann in coco['annotations']}
-
-    # Count unique classes
-    num_classes = len(class_ids)
-    print(f"Total number of unique classes: {num_classes}")
-
-    return COCO_PATH, class_ids
-
-def get_image(image_name, parent_directory):
+def get_image(image_name):
     """
     Inputs:
         image_name: full or partial image file name.
-        parent_directory: folder that contains the image. Recursive folders are ok.
     Returns:
         image: the image with matching file name.
     """
-    for root, _, files in os.walk(parent_directory):
+    global IMAGES_TO_SEGMENT_PATH
+    for root, _, files in os.walk(IMAGES_TO_SEGMENT_PATH):
         for file in files:
             if image_name in file:
                 fpath = os.path.join(root, file)
                 return _clahe_normalize(cv2.imread(fpath))
     
-    raise FileNotFoundError(f"No matching images for {image_name} were found under {parent_directory}.")
+    raise FileNotFoundError(f"No matching images for {image_name} were found under {IMAGES_TO_SEGMENT_PATH}.")
 
-def get_mask(path_to_image, COCO_PATH, class_id):
+def get_mask(image_name, class_id):
     """
     Inputs: 
-        path_to_image: full image filepath
+        image_name: name of image
         class_id: integer representing the class to get the segmentation mask for
-        COCO_PATH: full path to COCO annotations file
     Returns:
         mask: binary mask for the image and class
     """
-    file_name = os.path.basename(path_to_image)
+    global COCO_PATH
+    file_name = os.path.basename(image_name)
 
     with open(COCO_PATH, 'r') as f:
         coco = json.load(f)
