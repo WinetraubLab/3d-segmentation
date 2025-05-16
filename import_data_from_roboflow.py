@@ -45,7 +45,7 @@ def init_from_folder(folder_path):
     Initialize from a folder containing COCO-style annotations.
 
     Inputs:
-        folder_path: path to folder containing images and COCO-style annotation.
+        folder_path: path to folder containing COCO-style annotation.
     Returns:
         COCO_PATH: path to annotations file
         class_ids: a list of integers representing each unique class in the dataset segmentations
@@ -56,22 +56,10 @@ def init_from_folder(folder_path):
             if file.endswith('.coco.json'):
                 COCO_PATH = (os.path.join(root, file))
                  
-    with open(COCO_PATH, 'r') as f:
-        coco = json.load(f)
-
-    # Get all class ids from segmentation annotations
-    class_ids = {ann['category_id'] for ann in coco['annotations']}
-
-    # Count unique classes
-    num_classes = len(class_ids)
-    print(f"Total number of unique classes: {num_classes}")
-
-    return class_ids
+    return list_all_labels()
 
 def list_all_labels():
     """ 
-    Inputs: 
-        coco_path: path to COCO annotation file containing segmentation info.
     Returns:
         class_ids: list of integers representing each unique class in the segmentations.
     """
@@ -126,7 +114,7 @@ def get_keyframe_indices(class_id):
         if img['id'] in ann_ids
     ]
 
-    frame_names = list_all_images(IMAGES_TO_SEGMENT_PATH)
+    frame_names = list_all_images()
 
     keyframe_indices = {0, len(frame_names)-1}
     for ann in keyframe_filenames:
@@ -239,3 +227,7 @@ def get_mask(image_name, class_id):
         mask[m.astype(bool)] = 1  # Binary mask
 
     return mask
+
+def get_images_to_segment_path():
+    global IMAGES_TO_SEGMENT_PATH
+    return IMAGES_TO_SEGMENT_PATH

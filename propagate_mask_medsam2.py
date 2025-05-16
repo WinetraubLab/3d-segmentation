@@ -40,6 +40,8 @@ class CustomMEDSAM2():
             frame_idx: int index of frame to predict
             prompt_mask: prompting mask. dict of {obj_id: binary mask} from previous image frame_idx - 1
         """
+        predicted_logits = {}
+        predicted_masks = {}
         # Set up tracking
         for obj_id, mask in prompt_mask.items():
             if mask is not None and np.any(mask):
@@ -86,9 +88,17 @@ class CustomMEDSAM2():
             mask=start_mask,
                 )
         
-        video_segments_f[start_keyframe_idx] = start_mask
-        
-        for out_frame_idx in range(1, end_keyframe_idx-start_keyframe_idx):
+        predicted_mask, predicted_logits = self.predict_mask(
+            predictor,
+            inference_state,
+            start_keyframe_idx,
+            {class_id: start_mask}
+        )
+
+        video_segments_f[start_keyframe_idx] = predicted_mask
+        video_logits_f[start_keyframe_idx] = predicted_logits
+
+        for out_frame_idx in range(start_keyframe_idx+1, end_keyframe_idx+1):
             predicted_mask, predicted_logits = self.predict_mask(predictor, inference_state, out_frame_idx, video_segments_f[out_frame_idx-1])
 
             video_segments_f[out_frame_idx] = predicted_mask
@@ -119,11 +129,23 @@ class CustomMEDSAM2():
             obj_id=class_id,
             mask=end_mask,
                 )
-        
-        video_segments_b[start_keyframe_idx] = end_mask
 
-        for out_frame_idx in range(1, end_keyframe_idx-start_keyframe_idx):
-            predicted_mask, predicted_logits = self.predict_mask(predictor, inference_state, out_frame_idx, video_segments_b[out_frame_idx+1], reverse=True)
+        predicted_mask, predicted_logits = self.predict_mask(
+            predictor,
+            inference_state,
+            end_keyframe_idx,
+            {class_id: end_mask},
+            reverse=True
+        )
+
+        video_segments_b[end_keyframe_idx] = predicted_mask
+        video_logits_b[end_keyframe_idx] = predicted_logits
+        
+        for out_frame_idx in reversed(range(start_keyframe_idx, end_keyframe_idx)):
+            prompt_mask = video_segments_b[out_frame_idx + 1]
+            predicted_mask, predicted_logits = self.predict_mask(
+                predictor, inference_state, out_frame_idx, prompt_mask, reverse=True
+            )
 
             video_segments_b[out_frame_idx] = predicted_mask
             video_logits_b[out_frame_idx] = predicted_logits
@@ -141,7 +163,8 @@ class CustomMEDSAM2():
             fused_masks (dict): Predicted mask for each image
             frame_names (list): list of image file names, in order
         """
-        images_to_segment_path = import_data_from_roboflow.IMAGES_TO_SEGMENT_PATH
+        global IMAGES_TO_SEGMENT_PATH
+        IMAGES_TO_SEGMENT_PATH = import_data_from_roboflow.get_images_to_segment_path()
 
         frame_names = import_data_from_roboflow.list_all_images()
         keyframe_indices = import_data_from_roboflow.get_keyframe_indices(class_id)
@@ -164,7 +187,7 @@ class CustomMEDSAM2():
             start_mask = np.array(start_mask).astype(np.uint8)
 
             # forward pass
-            segments, logits = self._propagate_forward(images_to_segment_path, start_mask, start_idx, end_idx, class_id)
+            segments, logits = self._propagate_forward(IMAGES_TO_SEGMENT_PATH, start_mask, start_idx, end_idx, class_id)
             video_segments_f.update(segments)
             video_logits_f.update(logits)
 
@@ -172,7 +195,7 @@ class CustomMEDSAM2():
             end_mask = np.array(start_mask).astype(np.uint8)
 
             # reverse
-            segments, logits = self._propagate_reverse(images_to_segment_path, end_mask, start_idx, end_idx, class_id)
+            segments, logits = self._propagate_reverse(IMAGES_TO_SEGMENT_PATH, end_mask, start_idx, end_idx, class_id)
             video_segments_b.update(segments)
             video_logits_b.update(logits)
 
@@ -233,42 +256,59 @@ def combine_class_masks(indiv_class_masks_list, frame_names, output_dir=None, sh
         output_dir: directory to write the output images to
         show: if True, show combined class masks
     """
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
 
-    os.makedirs(output_dir, exist_ok=True) if output_dir else None
+    all_frame_indices = set()
+    for class_dict in indiv_class_masks_list:
+        all_frame_indices.update(class_dict.keys())
+    all_frame_indices = sorted(all_frame_indices)
 
-    shared_keys = set()
-    for d in indiv_class_masks_list:
-        shared_keys.update(d.keys())
-    shared_keys = sorted(shared_keys)
-
-    for frame_idx in shared_keys:
+    for frame_idx in all_frame_indices:
         masks = []
         bins = []
 
-        for i, class_mask_dict in enumerate(indiv_class_masks_list):
-            masks.append(class_mask_dict.get(frame_idx, np.zeros_like(next(iter(class_mask_dict.values())))))
+        # get binary masks for each class 
+        for class_mask_dict in indiv_class_masks_list:
+            class_masks = class_mask_dict.get(frame_idx, {})
+            if class_masks:
+                mask_array = list(class_masks.values())[0]
+                masks.append(mask_array)
+            else:
+                masks.append(None)
 
-        for i in range(len(masks)):
-            # Binarize masks
-            bins.append((list(masks[i].values())[0] > 0).astype(np.uint8).squeeze())
+        h, w = None, None
+        for m in masks:
+            if m is not None:
+                m = m.squeeze()
+                h, w = m.shape
+                break
+        if h is None or w is None:
+            print(f"Skipping frame {frame_idx}: no masks available.")
+            continue
 
-        # Resolve conflicts: first class takes priority
-        for i in range(len(bins)-1, 0, -1):
-            bins[i][bins[i-1] == 1] = 0
+        #  fill masks
+        for m in masks:
+            if m is not None:
+                bins.append((m > 0).astype(np.uint8).squeeze())
+            else:
+                bins.append(np.zeros((h, w), dtype=np.uint8))
 
-        h, w = bins[0].shape
+        # first class takes priority
+        for i in range(len(bins) - 1, 0, -1):
+            bins[i][bins[i - 1] == 1] = 0
+
         rgb_mask = np.zeros((h, w, 3), dtype=np.uint8)
-
         num_classes = len(bins)
         cmap = plt.get_cmap('Set3')
         colors = (np.array([cmap(i)[:3] for i in range(num_classes)]) * 255).astype(np.uint8)
 
         for class_idx, binary_mask in enumerate(bins):
-            color = colors[class_idx]
-            rgb_mask[binary_mask == 1] = color
+            rgb_mask[binary_mask == 1] = colors[class_idx]
 
+        # Save image
         if output_dir:
-            out_path = os.path.join(output_dir, frame_names[frame_idx] + '.png')
+            out_path = os.path.join(output_dir, f"{frame_names[frame_idx]}.png")
             cv2.imwrite(out_path, cv2.cvtColor(rgb_mask, cv2.COLOR_RGB2BGR))
 
         if show:
