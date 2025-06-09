@@ -3,6 +3,8 @@ import os
 import cv2
 import matplotlib.pyplot as plt
 from torch.nn.functional import sigmoid
+from scipy.ndimage import gaussian_filter
+import torch
 
 from MedSAM2.sam2.build_sam import build_sam2_video_predictor
 import import_data_from_roboflow
@@ -152,7 +154,8 @@ class CustomMEDSAM2():
 
         return video_segments_b, video_logits_b
 
-    def propagate_sequence(self, class_id):
+    def propagate_sequence(self, class_id, smooth_logits=False, smooth_logits_sigma=1.0, smooth_binary=False, 
+                                  smooth_binary_kernel=3, smooth_binary_iterations=1):
         """
         Propagate masks from start_idx to end_idx (inclusive) using MedSAM2, for specified class.
         Inputs:
@@ -192,21 +195,25 @@ class CustomMEDSAM2():
             video_logits_f.update(logits)
 
             end_mask = import_data_from_roboflow.get_mask(frame_names[end_idx], class_id)
-            end_mask = np.array(start_mask).astype(np.uint8)
+            end_mask = np.array(end_mask).astype(np.uint8)
 
             # reverse
             segments, logits = self._propagate_reverse(IMAGES_TO_SEGMENT_PATH, end_mask, start_idx, end_idx, class_id)
             video_segments_b.update(segments)
             video_logits_b.update(logits)
 
-            fused_masks.update(self.merge_bidirectional_masks([start_idx, end_idx], video_logits_f, video_logits_b))
+            fused_masks.update(self.merge_bidirectional_masks([start_idx, end_idx], video_logits_f, video_logits_b, smooth_logits=smooth_logits, smooth_logits_sigma=smooth_logits_sigma, smooth_binary=smooth_binary, 
+                                  smooth_binary_kernel=smooth_binary_kernel, smooth_binary_iterations=smooth_binary_iterations))
 
         return fused_masks, frame_names
 
 
-    def merge_bidirectional_masks(self, keyframe_indices, video_logits_f, video_logits_b, thresh=0.5):
+    def merge_bidirectional_masks(self, keyframe_indices, video_logits_f, video_logits_b, thresh=0.5, 
+                                  smooth_logits=False, smooth_logits_sigma=1.0, smooth_binary=False, 
+                                  smooth_binary_kernel=3, smooth_binary_iterations=1):
 
         fused_masks = {}
+    
 
         for t in range(keyframe_indices[0], keyframe_indices[1] + 1):
             if t in video_logits_f and t in video_logits_b:
@@ -224,31 +231,94 @@ class CustomMEDSAM2():
                         alpha = (keyframe_indices[1] - t) / (keyframe_indices[1] - keyframe_indices[0])
                         fused_logit = alpha * logit_f + (1 - alpha) * logit_b
 
+                        if smooth_logits:
+                            fused_logit_np = fused_logit.detach().cpu().numpy()
+                            fused_logit_np = _smooth_mask_logits(fused_logit_np, smooth_logits_sigma)
+                            fused_logit = torch.from_numpy(fused_logit_np).to(fused_logit.device)
+
                         # Apply sigmoid to get probabilities
                         prob = sigmoid(fused_logit)
 
                         # Threshold to bool
                         mask = (prob > thresh).bool().numpy()
 
+                        if smooth_binary:
+                            mask = _smooth_binary_mask(mask, smooth_binary_kernel, smooth_binary_iterations)
+
                         fused_masks[t][obj_id] = mask
+                    else:
+                        logit_f = frame_logits_f[obj_id]
+                        fused_logit = logit_f
+                        if smooth_logits:
+                            fused_logit_np = fused_logit.detach().cpu().numpy()
+                            fused_logit_np = _smooth_mask_logits(fused_logit_np, smooth_logits_sigma)
+                            fused_logit = torch.from_numpy(fused_logit_np).to(fused_logit.device)
+                        prob = sigmoid(fused_logit)
+                        mask = (prob > thresh).bool().numpy()
+
+                        if smooth_binary:
+                            mask = _smooth_binary_mask(mask, smooth_binary_kernel, smooth_binary_iterations)
+
+                        fused_masks[t][obj_id] = mask
+
             elif t in video_logits_f:
                 print(f"Using forward masks for frame {t}")
                 if t not in fused_masks:
                     fused_masks[t] = {}
                 for obj_id, logit in video_logits_f[t].items():
-                    fused_masks[t][obj_id] = (sigmoid(logit) > thresh).bool().numpy()
+                    if smooth_logits:
+                        logit_np = logit.detach().cpu().numpy()
+                        logit_np = _smooth_mask_logits(logit_np, smooth_logits_sigma)
+                        logit = torch.from_numpy(logit_np).to(logit.device)
+                    mask = (sigmoid(logit) > thresh).bool().numpy()
+
+                    if smooth_binary:
+                        mask = _smooth_binary_mask(mask, smooth_binary_kernel, smooth_binary_iterations)
+                    fused_masks[t][obj_id] = mask
+
             elif t in video_logits_b:
                 print(f"Using reverse masks for frame {t}")
                 if t not in fused_masks:
                     fused_masks[t] = {}
                 for obj_id, logit in video_logits_b[t].items():
-                    fused_masks[t][obj_id] = (sigmoid(logit) > thresh).bool().numpy()
+                    if smooth_logits:
+                        logit_np = logit.detach().cpu().numpy()
+                        logit_np = _smooth_mask_logits(logit_np, smooth_logits_sigma)
+                        logit = torch.from_numpy(logit_np).to(logit.device)
+                    mask = (sigmoid(logit) > thresh).bool().numpy()
+                    
+                    if smooth_binary:
+                        mask = _smooth_binary_mask(mask, smooth_binary_kernel, smooth_binary_iterations)
+                    fused_masks[t][obj_id] = mask
             else:
                 print(f"No masks found for frame {t}")
 
         return fused_masks
+    
+def _smooth_mask_logits(mask_logits, sigma=1.0):
+    """
+    Apply gaussian smoothing to raw logits of a generated mask.
+    Inputs:
+        mask_logits: logits for a single predicted mask
+    """
+    if len(mask_logits.shape) > 2:
+        mask_logits = mask_logits.squeeze()
+    return gaussian_filter(mask_logits, sigma=sigma)
 
-def combine_class_masks(indiv_class_masks_list, frame_names, output_dir=None, show=True):
+def _smooth_binary_mask(binary_mask, kernel_size=3, iterations=1):
+    """
+    Morphological clean up on binary mask to remove small holes and noise.
+    """
+    if binary_mask.dtype != np.uint8:
+        binary_mask = (binary_mask > 0).astype(np.uint8) * 255
+    kernel = np.ones((kernel_size, kernel_size), np.uint8)
+    opened = cv2.morphologyEx(binary_mask, cv2.MORPH_OPEN, kernel, iterations=iterations)
+    closed = cv2.morphologyEx(opened, cv2.MORPH_CLOSE, kernel, iterations=iterations)
+    return (closed > 127).astype(np.uint8)
+    
+
+def combine_class_masks(indiv_class_masks_list, frame_names, output_dir=None, show=True, 
+                        smooth_binary_masks=False, smoothing_kernel=3, smoothing_iterations=1):
     """
     Combine multiple class masks into one mask. Different colors represent different classes.
     Inputs:
@@ -273,6 +343,9 @@ def combine_class_masks(indiv_class_masks_list, frame_names, output_dir=None, sh
             class_masks = class_mask_dict.get(frame_idx, {})
             if class_masks:
                 mask_array = list(class_masks.values())[0]
+                if smooth_binary_masks:
+                    mask_array = _smooth_binary_mask(mask_array, smoothing_kernel, smoothing_iterations)
+                    
                 masks.append(mask_array)
             else:
                 masks.append(None)
@@ -317,3 +390,6 @@ def combine_class_masks(indiv_class_masks_list, frame_names, output_dir=None, sh
             plt.title(frame_names[frame_idx])
             plt.axis('off')
             plt.show()
+
+def save_masks_as_coco_annotations(masks, class_id=None):
+    """Save generated image masks as COCO annotations."""

@@ -14,8 +14,8 @@ class Test3dSegmentation(unittest.TestCase):
         self.workspace_name = "yolab-kmmfx"  
         self.project_name = "vol1_2"
         self.api_key = "" # Set when testing test_init_roboflow()
-        self.MODEL_CONFIG = "configs/sam2.1_hiera_t512.yaml"
-        self.MODEL_CHECKPOINT = "checkpoints/MedSAM2_latest.pt"
+        self.MODEL_CONFIG = "configs/sam2.1_hiera_t512.yaml" # when testing, add MedSAM2 to sys path
+        self.MODEL_CHECKPOINT = "MedSAM2/checkpoints/MedSAM2_latest.pt"
 
     def set_up_global_vars(self):
         import_data_from_roboflow.init_from_folder("test_vectors/sample_annotations_folder/")
@@ -65,9 +65,9 @@ class Test3dSegmentation(unittest.TestCase):
     def test_propagate(self):
         self.set_up_model()
         self.set_up_global_vars()
-        fused_masks, frame_names = self.model.propagate_sequence(0)
-        for f in fused_masks:
-            assert np.any(f)
+        fused_masks_dict, frame_names = self.model.propagate_sequence(1)
+        for i, f in fused_masks_dict.items():
+          assert np.any(f)
 
     def test_combine_class_masks(self):
         self.set_up_model()
@@ -76,3 +76,27 @@ class Test3dSegmentation(unittest.TestCase):
         fused_masks1, frame_names1 = self.model.propagate_sequence(1)
         output_dir = "test_vectors/output_combined_masks/"
         propagate_mask_medsam2.combine_class_masks([fused_masks0, fused_masks1], frame_names0, output_dir=output_dir, show=True)
+
+    def test_logit_smoothing(self):
+        self.set_up_model()
+        self.set_up_global_vars()
+        fused_masks0, frame_names0 = self.model.propagate_sequence(0, smooth_logits=True, smooth_logits_sigma=10.0, smooth_binary=False)
+        for i, f in fused_masks0.items():
+            assert np.any(f)
+
+    def test_binary_smoothing(self):
+        self.set_up_model()
+        self.set_up_global_vars()
+        fused_masks0, frame_names0 = self.model.propagate_sequence(0, smooth_logits=False, smooth_logits_sigma=10.0, smooth_binary=True)
+        for i, f in fused_masks0.items():
+            assert np.any(f)
+            
+    def test_binary_smoothing_2(self):
+        self.set_up_model()
+        self.set_up_global_vars()
+        fused_masks0, frame_names0 = self.model.propagate_sequence(0)
+        fused_masks1, frame_names1 = self.model.propagate_sequence(1)
+        output_dir = "test_vectors/output_combined_masks_binary_smoothed/"
+        propagate_mask_medsam2.combine_class_masks([fused_masks0, fused_masks1], frame_names0, output_dir=output_dir, show=True,
+                                                  smooth_binary_masks=True, smoothing_kernel=10, smoothing_iterations=2)
+        
