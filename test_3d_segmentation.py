@@ -5,7 +5,7 @@ import import_data_from_roboflow
 import propagate_mask_medsam2
 import cv2
 
-class TestFitPlaneElastic(unittest.TestCase):
+class Test3dSegmentation(unittest.TestCase):
 
     def setUp(self):
         np.random.seed(42)
@@ -53,7 +53,7 @@ class TestFitPlaneElastic(unittest.TestCase):
         import_data_from_roboflow.get_image("y0124_png.rf.dbeef95400a14da233736fc6e7df31b9.jpg")
 
     def test_get_mask(self):
-        m = import_data_from_roboflow.get_mask("y0124_png.rf.dbeef95400a14da233736fc6e7df31b9.jpg", 0)
+        m = import_data_from_roboflow.get_mask("y0127_png.rf.d5e3bec4667f62e119206f3a34f617e0.jpg", 1)
         assert np.any(np.array(m))
 
     # Model functions
