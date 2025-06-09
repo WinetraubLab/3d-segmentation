@@ -231,6 +231,12 @@ class CustomMEDSAM2():
                         mask = (prob > thresh).bool().numpy()
 
                         fused_masks[t][obj_id] = mask
+                    else:
+                        logit_f = frame_logits_f[obj_id]
+                        fused_logit = logit_f
+                        prob = sigmoid(fused_logit)
+                        mask = (prob > thresh).bool().numpy()
+                        fused_masks[t][obj_id] = mask
             elif t in video_logits_f:
                 print(f"Using forward masks for frame {t}")
                 if t not in fused_masks:
