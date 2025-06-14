@@ -12,7 +12,7 @@ class CustomMEDSAM2():
         self.config_filepath = config_filepath
         self.checkpoint_filepath = checkpoint_filepath
 
-    def initialize_segmentation_model(self):
+    def initialize_new_predictor_state(self):
         """
         Initialize predictor for segmentation.
         Inputs:
@@ -22,14 +22,13 @@ class CustomMEDSAM2():
             predictor: MEDSAM2 predictor
         """
         # Initialize predictor
-        predictor = build_sam2_video_predictor(
+        self.predictor = build_sam2_video_predictor(
             config_file= self.config_filepath,
             ckpt_path= self.checkpoint_filepath,
             apply_postprocessing=True,
             # hydra_overrides_extra=hydra_overrides_extra,
             vos_optimized=  True,
         )
-        return predictor
 
     def predict_mask(self, predictor, inference_state, frame_idx, prompt_mask, reverse=False):
         """
@@ -74,14 +73,14 @@ class CustomMEDSAM2():
         """
         Forward pass for segmentation prediction given a start mask and end point.
         """
-        predictor = self.initialize_segmentation_model()
-        inference_state = predictor.init_state(video_path=image_dataset_folder_path, async_loading_frames=False)
+        self.initialize_new_predictor_state()
+        inference_state = self.predictor.init_state(video_path=image_dataset_folder_path, async_loading_frames=False)
 
         video_logits_f= {}
         video_segments_f = {}
 
         # add initial mask as conditioning frame
-        predictor.add_new_mask(
+        self.predictor.add_new_mask(
             inference_state=inference_state,
             frame_idx=start_keyframe_idx,
             obj_id=class_id,
@@ -89,7 +88,7 @@ class CustomMEDSAM2():
                 )
         
         predicted_mask, predicted_logits = self.predict_mask(
-            predictor,
+            self.predictor,
             inference_state,
             start_keyframe_idx,
             {class_id: start_mask}
@@ -99,7 +98,7 @@ class CustomMEDSAM2():
         video_logits_f[start_keyframe_idx] = predicted_logits
 
         for out_frame_idx in range(start_keyframe_idx+1, end_keyframe_idx+1):
-            predicted_mask, predicted_logits = self.predict_mask(predictor, inference_state, out_frame_idx, video_segments_f[out_frame_idx-1])
+            predicted_mask, predicted_logits = self.predict_mask(self.predictor, inference_state, out_frame_idx, video_segments_f[out_frame_idx-1])
 
             video_segments_f[out_frame_idx] = predicted_mask
             video_logits_f[out_frame_idx] = predicted_logits
@@ -110,8 +109,8 @@ class CustomMEDSAM2():
         """
         Backwards pass for segmentation prediction given a start mask and end point.
         """
-        predictor = self.initialize_segmentation_model()
-        inference_state = predictor.init_state(video_path=image_dataset_folder_path, async_loading_frames=False)
+        self.initialize_new_predictor_state()
+        inference_state = self.predictor.init_state(video_path=image_dataset_folder_path, async_loading_frames=False)
 
         video_logits_b= {}
         video_segments_b = {}
@@ -123,7 +122,7 @@ class CustomMEDSAM2():
             start_keyframe_idx = tmp
 
         # add initial mask as conditioning frame
-        predictor.add_new_mask(
+        self.predictor.add_new_mask(
             inference_state=inference_state,
             frame_idx=end_keyframe_idx,
             obj_id=class_id,
@@ -131,7 +130,7 @@ class CustomMEDSAM2():
                 )
 
         predicted_mask, predicted_logits = self.predict_mask(
-            predictor,
+            self.predictor,
             inference_state,
             end_keyframe_idx,
             {class_id: end_mask},
@@ -144,7 +143,7 @@ class CustomMEDSAM2():
         for out_frame_idx in reversed(range(start_keyframe_idx, end_keyframe_idx)):
             prompt_mask = video_segments_b[out_frame_idx + 1]
             predicted_mask, predicted_logits = self.predict_mask(
-                predictor, inference_state, out_frame_idx, prompt_mask, reverse=True
+                self.predictor, inference_state, out_frame_idx, prompt_mask, reverse=True
             )
 
             video_segments_b[out_frame_idx] = predicted_mask
