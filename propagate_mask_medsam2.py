@@ -70,12 +70,12 @@ class CustomMEDSAM2():
             }
         return predicted_masks, predicted_logits
 
-    def _propagate_forward(self, images_to_segment_path, start_mask, start_keyframe_idx, end_keyframe_idx, class_id):
+    def _propagate_forward(self, image_dataset_folder_path, start_mask, start_keyframe_idx, end_keyframe_idx, class_id):
         """
         Forward pass for segmentation prediction given a start mask and end point.
         """
         predictor = self.initialize_segmentation_model()
-        inference_state = predictor.init_state(video_path=images_to_segment_path, async_loading_frames=False)
+        inference_state = predictor.init_state(video_path=image_dataset_folder_path, async_loading_frames=False)
 
         video_logits_f= {}
         video_segments_f = {}
@@ -106,12 +106,12 @@ class CustomMEDSAM2():
 
         return video_segments_f, video_logits_f
     
-    def _propagate_reverse(self, images_to_segment_path, end_mask, start_keyframe_idx, end_keyframe_idx, class_id):
+    def _propagate_reverse(self, image_dataset_folder_path, end_mask, start_keyframe_idx, end_keyframe_idx, class_id):
         """
         Backwards pass for segmentation prediction given a start mask and end point.
         """
         predictor = self.initialize_segmentation_model()
-        inference_state = predictor.init_state(video_path=images_to_segment_path, async_loading_frames=False)
+        inference_state = predictor.init_state(video_path=image_dataset_folder_path, async_loading_frames=False)
 
         video_logits_b= {}
         video_segments_b = {}
@@ -156,15 +156,15 @@ class CustomMEDSAM2():
         """
         Propagate masks from start_idx to end_idx (inclusive) using MedSAM2, for specified class.
         Inputs:
-            images_to_segment_path: path to directory of image stack
+            image_dataset_folder_path: path to directory of image stack
             class_id: COCO category id for segmentation
             coco_path: COCO annotation file path 
         Returns:
             fused_masks (dict): Predicted mask for each image
             frame_names (list): list of image file names, in order
         """
-        global IMAGES_TO_SEGMENT_PATH
-        IMAGES_TO_SEGMENT_PATH = import_data_from_roboflow.get_images_to_segment_path()
+        global IMAGE_DATASET_FOLDER_PATH
+        IMAGE_DATASET_FOLDER_PATH = import_data_from_roboflow.get_images_to_segment_path()
 
         frame_names = import_data_from_roboflow.list_all_images()
         keyframe_indices = import_data_from_roboflow.get_keyframe_indices(class_id)
@@ -187,7 +187,7 @@ class CustomMEDSAM2():
             start_mask = np.array(start_mask).astype(np.uint8)
 
             # forward pass
-            segments, logits = self._propagate_forward(IMAGES_TO_SEGMENT_PATH, start_mask, start_idx, end_idx, class_id)
+            segments, logits = self._propagate_forward(IMAGE_DATASET_FOLDER_PATH, start_mask, start_idx, end_idx, class_id)
             video_segments_f.update(segments)
             video_logits_f.update(logits)
 
@@ -195,7 +195,7 @@ class CustomMEDSAM2():
             end_mask = np.array(start_mask).astype(np.uint8)
 
             # reverse
-            segments, logits = self._propagate_reverse(IMAGES_TO_SEGMENT_PATH, end_mask, start_idx, end_idx, class_id)
+            segments, logits = self._propagate_reverse(IMAGE_DATASET_FOLDER_PATH, end_mask, start_idx, end_idx, class_id)
             video_segments_b.update(segments)
             video_logits_b.update(logits)
 

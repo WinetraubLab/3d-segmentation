@@ -7,8 +7,8 @@ import json
 from collections import defaultdict
 import numpy as np
 
-COCO_PATH = ""
-IMAGES_TO_SEGMENT_PATH = ""
+COCO_PATH = ""                  # Path to the .coco annotation file.
+IMAGE_DATASET_FOLDER_PATH = ""  # Path to the directory containing the images to segment.
 
 def init_from_roboflow(workspace_name, project_name, api_key):
     """
@@ -83,9 +83,9 @@ def list_all_images():
     Returns:
         image_names: list of filenames ending in png, jpg, jpeg, tif, or tiff, in sorted order.
     """
-    global IMAGES_TO_SEGMENT_PATH
+    global IMAGE_DATASET_FOLDER_PATH
     image_names = [
-            p for p in os.listdir(IMAGES_TO_SEGMENT_PATH)
+            p for p in os.listdir(IMAGE_DATASET_FOLDER_PATH)
             if os.path.splitext(p)[-1] in [".jpg", ".jpeg", ".JPG", ".JPEG", ".png", ".PNG", ".tif", ".tiff", ".TIF", ".TIFF"]
         ]
     image_names = list(sorted(image_names))
@@ -96,13 +96,13 @@ def get_keyframe_indices(class_id):
     Gets the indices of the annotated segmentations wrt the image stack to segment.
     Inputs:
         coco_path: path to the COCO-format annotation JSON file.
-        images_to_segment_path: path to directory containing image sequence.
+        image_dataset_folder_path: path to directory containing image sequence.
         class_id: COCO category id to return keyframe indices for.
     Returns:
         keyframe_indices: Indices of images in the sequence that have annotations for the specified class.
     """
     global COCO_PATH
-    global IMAGES_TO_SEGMENT_PATH
+    global IMAGE_DATASET_FOLDER_PATH
     with open(COCO_PATH, 'r') as f:
         coco = json.load(f)
 
@@ -132,8 +132,8 @@ def preprocess_images(original_images_path, preprocessed_images_path):
         original_images_path: directory containing original images.
         preprocessed_images_path: where to save preprocessed images.
     """
-    global IMAGES_TO_SEGMENT_PATH
-    IMAGES_TO_SEGMENT_PATH = preprocessed_images_path
+    global IMAGE_DATASET_FOLDER_PATH
+    IMAGE_DATASET_FOLDER_PATH = preprocessed_images_path
     os.makedirs(preprocessed_images_path, exist_ok=True)
     for root, _, files in os.walk(original_images_path):
         for file in files:
@@ -171,14 +171,14 @@ def get_image(image_name):
     Returns:
         image: the image with matching file name.
     """
-    global IMAGES_TO_SEGMENT_PATH
-    for root, _, files in os.walk(IMAGES_TO_SEGMENT_PATH):
+    global IMAGE_DATASET_FOLDER_PATH
+    for root, _, files in os.walk(IMAGE_DATASET_FOLDER_PATH):
         for file in files:
             if image_name in file:
                 fpath = os.path.join(root, file)
                 return _clahe_normalize(cv2.imread(fpath))
     
-    raise FileNotFoundError(f"No matching images for {image_name} were found under {IMAGES_TO_SEGMENT_PATH}.")
+    raise FileNotFoundError(f"No matching images for {image_name} were found under {IMAGE_DATASET_FOLDER_PATH}.")
 
 def get_mask(image_name, class_id):
     """
@@ -229,5 +229,5 @@ def get_mask(image_name, class_id):
     return mask
 
 def get_images_to_segment_path():
-    global IMAGES_TO_SEGMENT_PATH
-    return IMAGES_TO_SEGMENT_PATH
+    global IMAGE_DATASET_FOLDER_PATH
+    return IMAGE_DATASET_FOLDER_PATH

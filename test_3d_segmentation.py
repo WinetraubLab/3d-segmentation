@@ -10,7 +10,7 @@ class Test3dSegmentation(unittest.TestCase):
     def setUp(self):
         np.random.seed(42)
         self.original_images_path = "test_vectors/sample_image_sequence/"
-        self.images_to_segment_path = "test_vectors/preprocessed_images/"
+        self.image_dataset_folder_path = "test_vectors/preprocessed_images/"
         self.workspace_name = "yolab-kmmfx"  
         self.project_name = "vol1_2"
         self.api_key = "" # Set when testing test_init_roboflow()
@@ -19,7 +19,7 @@ class Test3dSegmentation(unittest.TestCase):
 
     def set_up_global_vars(self):
         import_data_from_roboflow.init_from_folder("test_vectors/sample_annotations_folder/")
-        import_data_from_roboflow.preprocess_images(self.original_images_path, self.images_to_segment_path)
+        import_data_from_roboflow.preprocess_images(self.original_images_path, self.image_dataset_folder_path)
         
     def test_init_folder(self):
         class_ids = import_data_from_roboflow.init_from_folder("test_vectors/sample_annotations_folder/")
@@ -34,9 +34,9 @@ class Test3dSegmentation(unittest.TestCase):
         assert len(import_data_from_roboflow.list_all_labels()) == 3
 
     def test_preprocess_imgs(self):
-        import_data_from_roboflow.preprocess_images(self.original_images_path, self.images_to_segment_path)
+        import_data_from_roboflow.preprocess_images(self.original_images_path, self.image_dataset_folder_path)
         fpath = import_data_from_roboflow.get_images_to_segment_path()
-        assert fpath == self.images_to_segment_path
+        assert fpath == self.image_dataset_folder_path
 
     def test_list_all_images(self):
         self.set_up_global_vars()
