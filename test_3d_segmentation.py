@@ -35,7 +35,7 @@ class Test3dSegmentation(unittest.TestCase):
 
     def test_preprocess_imgs(self):
         import_data_from_roboflow.preprocess_images(self.original_images_path, self.image_dataset_folder_path)
-        fpath = import_data_from_roboflow.get_images_to_segment_path()
+        fpath = import_data_from_roboflow.get_image_dataset_folder_path()
         assert fpath == self.image_dataset_folder_path
 
     def test_list_all_images(self):

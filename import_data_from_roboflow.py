@@ -228,6 +228,6 @@ def get_mask(image_name, class_id):
 
     return mask
 
-def get_images_to_segment_path():
+def get_image_dataset_folder_path():
     global IMAGE_DATASET_FOLDER_PATH
     return IMAGE_DATASET_FOLDER_PATH

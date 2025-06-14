@@ -164,7 +164,7 @@ class CustomMEDSAM2():
             frame_names (list): list of image file names, in order
         """
         global IMAGE_DATASET_FOLDER_PATH
-        IMAGE_DATASET_FOLDER_PATH = import_data_from_roboflow.get_images_to_segment_path()
+        IMAGE_DATASET_FOLDER_PATH = import_data_from_roboflow.get_image_dataset_folder_path()
 
         frame_names = import_data_from_roboflow.list_all_images()
         keyframe_indices = import_data_from_roboflow.get_keyframe_indices(class_id)
