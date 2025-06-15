@@ -69,187 +69,177 @@ class CustomMEDSAM2():
             }
         return predicted_masks, predicted_logits
 
-    def _propagate_forward(self, image_dataset_folder_path, start_mask, start_keyframe_idx, end_keyframe_idx, class_id):
+    def _propagate_single_direction(self,  class_id, reverse=False):
         """
-        Forward pass for segmentation prediction given a start mask and end point.
+        Forward or backward pass for segmentation prediction. Uses ground truth masks for keyframes, otherwise uses previous prediction.
+        Inputs:
+            class_id: class ID to segment
+            reverse: if True, perform backward pass
+        Returns:
+            video_segments: pass predictions
+            video_logits: pass logits
         """
+        keyframe_indices = import_data_from_roboflow.get_keyframe_indices(class_id)
+        global IMAGE_DATASET_FOLDER_PATH
+        IMAGE_DATASET_FOLDER_PATH = import_data_from_roboflow.get_image_dataset_folder_path()
+
+        # new predictor state for forward pass
         self.initialize_new_predictor_state()
-        inference_state = self.predictor.init_state(video_path=image_dataset_folder_path, async_loading_frames=False)
+        inference_state = self.predictor.init_state(video_path=IMAGE_DATASET_FOLDER_PATH, async_loading_frames=False)
 
-        video_logits_f= {}
-        video_segments_f = {}
-
-        # add initial mask as conditioning frame
-        self.predictor.add_new_mask(
-            inference_state=inference_state,
-            frame_idx=start_keyframe_idx,
-            obj_id=class_id,
-            mask=start_mask,
-                )
+        video_logits = {}
+        video_segments = {}
         
-        predicted_mask, predicted_logits = self.predict_mask(
-            self.predictor,
-            inference_state,
-            start_keyframe_idx,
-            {class_id: start_mask}
-        )
-
-        video_segments_f[start_keyframe_idx] = predicted_mask
-        video_logits_f[start_keyframe_idx] = predicted_logits
-
-        for out_frame_idx in range(start_keyframe_idx+1, end_keyframe_idx+1):
-            predicted_mask, predicted_logits = self.predict_mask(self.predictor, inference_state, out_frame_idx, video_segments_f[out_frame_idx-1])
-
-            video_segments_f[out_frame_idx] = predicted_mask
-            video_logits_f[out_frame_idx] = predicted_logits
-
-        return video_segments_f, video_logits_f
-    
-    def _propagate_reverse(self, image_dataset_folder_path, end_mask, start_keyframe_idx, end_keyframe_idx, class_id):
-        """
-        Backwards pass for segmentation prediction given a start mask and end point.
-        """
-        self.initialize_new_predictor_state()
-        inference_state = self.predictor.init_state(video_path=image_dataset_folder_path, async_loading_frames=False)
-
-        video_logits_b= {}
-        video_segments_b = {}
-
-        # switch start and end idx if start is greater than end
-        if start_keyframe_idx > end_keyframe_idx:
-            tmp = end_keyframe_idx
-            end_keyframe_idx = start_keyframe_idx
-            start_keyframe_idx = tmp
-
-        # add initial mask as conditioning frame
-        self.predictor.add_new_mask(
-            inference_state=inference_state,
-            frame_idx=end_keyframe_idx,
-            obj_id=class_id,
-            mask=end_mask,
-                )
-
-        predicted_mask, predicted_logits = self.predict_mask(
-            self.predictor,
-            inference_state,
-            end_keyframe_idx,
-            {class_id: end_mask},
-            reverse=True
-        )
-
-        video_segments_b[end_keyframe_idx] = predicted_mask
-        video_logits_b[end_keyframe_idx] = predicted_logits
+        frame_names = import_data_from_roboflow.list_all_images()
         
-        for out_frame_idx in reversed(range(start_keyframe_idx, end_keyframe_idx)):
-            prompt_mask = video_segments_b[out_frame_idx + 1]
-            predicted_mask, predicted_logits = self.predict_mask(
-                self.predictor, inference_state, out_frame_idx, prompt_mask, reverse=True
-            )
+        # First handle frames before first keyframe - no predictions
+        if not reverse:
+            first_keyframe_idx = keyframe_indices[0]
+            for frame_idx in range(0, first_keyframe_idx):
+                video_segments[frame_idx] = {class_id: None}
+                video_logits[frame_idx] = {class_id: None}
+        else:
+            first_keyframe_idx = keyframe_indices[-1]
+            for frame_idx in range(first_keyframe_idx, len(frame_names)-1):
+                video_segments[frame_idx] = {class_id: None}
+                video_logits[frame_idx] = {class_id: None}
+        
+        if not reverse:
+            for i in range(first_keyframe_idx, len(frame_names)-1):
 
-            video_segments_b[out_frame_idx] = predicted_mask
-            video_logits_b[out_frame_idx] = predicted_logits
+                if i in keyframe_indices:
+                    # If i is a keyframe, use ground truth mask
+                    gt_mask = import_data_from_roboflow.get_mask(frame_names[i], class_id)
+                    gt_mask = np.array(gt_mask).astype(np.uint8)
+                
+                    # Add ground truth mask as conditioning frame
+                    self.predictor.add_new_mask(
+                        inference_state=inference_state,
+                        frame_idx=i,
+                        obj_id=class_id,
+                        mask=gt_mask,
+                    )
+                    predicted_mask, predicted_logits = gt_mask, gt_mask
+                
+                else:
+                    predicted_mask, predicted_logits = self.predict_mask(
+                        self.predictor, 
+                        inference_state, 
+                        i, 
+                        video_segments[i-1])
 
-        return video_segments_b, video_logits_b
+                video_segments[i] = predicted_mask
+                video_logits[i] = predicted_logits
+        else:
+            for i in range(first_keyframe_idx, 0, -1):
+
+                if i in keyframe_indices:
+                    # If i is a keyframe, use ground truth mask
+                    gt_mask = import_data_from_roboflow.get_mask(frame_names[i], class_id)
+                    gt_mask = np.array(gt_mask).astype(np.uint8)
+                
+                    # Add ground truth mask as conditioning frame
+                    self.predictor.add_new_mask(
+                        inference_state=inference_state,
+                        frame_idx=i,
+                        obj_id=class_id,
+                        mask=gt_mask,
+                    )
+                    predicted_mask, predicted_logits = gt_mask, gt_mask
+                
+                else:
+                    predicted_mask, predicted_logits = self.predict_mask(
+                        self.predictor, 
+                        inference_state, 
+                        i, 
+                        video_segments[i+1],
+                        reverse=True)
+
+                video_segments[i] = predicted_mask
+                video_logits[i] = predicted_logits
+
+        return video_segments, video_logits
+
 
     def propagate_sequence(self, class_id):
         """
-        Propagate masks from start_idx to end_idx (inclusive) using MedSAM2, for specified class.
+        Perform a global forward pass followed by a global backward pass, for specified class.
         Inputs:
-            image_dataset_folder_path: path to directory of image stack
-            class_id: COCO category id for segmentation
-            coco_path: COCO annotation file path 
+            class_id: COCO class id to segment
         Returns:
             fused_masks (dict): Predicted mask for each image
             frame_names (list): list of image file names, in order
         """
-        global IMAGE_DATASET_FOLDER_PATH
-        IMAGE_DATASET_FOLDER_PATH = import_data_from_roboflow.get_image_dataset_folder_path()
+        video_segments_f, video_logits_f = self._propagate_single_direction(class_id)
+        video_segments_b, video_logits_b = self._propagate_single_direction(class_id, reverse=True)
+        
+        # Merge forward and backward predictions
+        fused_masks = self.merge_bidirectional_masks(video_logits_f, video_logits_b, class_id)
+        return fused_masks
 
+    def merge_bidirectional_masks(self, video_logits_f, video_logits_b, class_id, thresh=0.5):
+        """
+        Merge forward and backward predictions using distance-weighted fusion between keyframe pairs.
+        Inputs:
+            video_logits_f: forward pass logits for all frames
+            video_logits_b: backward pass logits for all frames
+            class_id: class ID being segmented
+            thresh: threshold for binary mask conversion
+        Returns:
+            fused_masks: dictionary of merged masks for each frame
+        """
+        fused_masks = {}
         frame_names = import_data_from_roboflow.list_all_images()
         keyframe_indices = import_data_from_roboflow.get_keyframe_indices(class_id)
-        num_frames = len(frame_names)
 
-        start_idx = 0
-        end_idx = num_frames - 1
-
-        video_segments_f = {}
-        video_logits_f = {}
-        video_segments_b = {}
-        video_logits_b = {}
-        fused_masks = {}
-
-        for i in range(0, len(keyframe_indices)-1):
+        # For each pair of consecutive keyframes
+        for i in range(len(keyframe_indices)-1):
             start_idx = keyframe_indices[i]
             end_idx = keyframe_indices[i+1]
-
-            start_mask = import_data_from_roboflow.get_mask(frame_names[start_idx], class_id)
-            start_mask = np.array(start_mask).astype(np.uint8)
-
-            # forward pass
-            segments, logits = self._propagate_forward(IMAGE_DATASET_FOLDER_PATH, start_mask, start_idx, end_idx, class_id)
-            video_segments_f.update(segments)
-            video_logits_f.update(logits)
-
-            end_mask = import_data_from_roboflow.get_mask(frame_names[end_idx], class_id)
-            end_mask = np.array(start_mask).astype(np.uint8)
-
-            # reverse
-            segments, logits = self._propagate_reverse(IMAGE_DATASET_FOLDER_PATH, end_mask, start_idx, end_idx, class_id)
-            video_segments_b.update(segments)
-            video_logits_b.update(logits)
-
-            fused_masks.update(self.merge_bidirectional_masks([start_idx, end_idx], video_logits_f, video_logits_b))
-
-        return fused_masks, frame_names
-
-
-    def merge_bidirectional_masks(self, keyframe_indices, video_logits_f, video_logits_b, thresh=0.5):
-
-        fused_masks = {}
-
-        for t in range(keyframe_indices[0], keyframe_indices[1] + 1):
-            if t in video_logits_f and t in video_logits_b:
-                # print(f"Merging masks for frame {t}")
-                frame_logits_f = video_logits_f[t]
-                frame_logits_b = video_logits_b[t]
-                fused_masks[t] = {}
-
-                for obj_id in frame_logits_f.keys():
-                    if obj_id in frame_logits_b:
-                        logit_f = frame_logits_f[obj_id]
-                        logit_b = frame_logits_b[obj_id]
-
-                        # Distance-weighted fusion: favor closer keyframe
-                        alpha = (keyframe_indices[1] - t) / (keyframe_indices[1] - keyframe_indices[0])
-                        fused_logit = alpha * logit_f + (1 - alpha) * logit_b
-
-                        # Apply sigmoid to get probabilities
-                        prob = sigmoid(fused_logit)
-
-                        # Threshold to bool
-                        mask = (prob > thresh).bool().numpy()
-
-                        fused_masks[t][obj_id] = mask
-                    else:
-                        logit_f = frame_logits_f[obj_id]
-                        fused_logit = logit_f
-                        prob = sigmoid(fused_logit)
-                        mask = (prob > thresh).bool().numpy()
-                        fused_masks[t][obj_id] = mask
-            elif t in video_logits_f:
-                print(f"Using forward masks for frame {t}")
-                if t not in fused_masks:
+            
+            # Merge masks for frames between this keyframe pair
+            for t in range(start_idx, end_idx + 1):
+                if t in video_logits_f and t in video_logits_b:
+                    frame_logits_f = video_logits_f[t]
+                    frame_logits_b = video_logits_b[t]
                     fused_masks[t] = {}
-                for obj_id, logit in video_logits_f[t].items():
-                    fused_masks[t][obj_id] = (sigmoid(logit) > thresh).bool().numpy()
-            elif t in video_logits_b:
-                print(f"Using reverse masks for frame {t}")
-                if t not in fused_masks:
-                    fused_masks[t] = {}
-                for obj_id, logit in video_logits_b[t].items():
-                    fused_masks[t][obj_id] = (sigmoid(logit) > thresh).bool().numpy()
-            else:
-                print(f"No masks found for frame {t}")
+
+                    for obj_id in frame_logits_f.keys():
+                        if obj_id in frame_logits_b:
+                            logit_f = frame_logits_f[obj_id]
+                            logit_b = frame_logits_b[obj_id]
+
+                            # Distance-weighted fusion: favor closer keyframe
+                            alpha = (end_idx - t) / (end_idx - start_idx)
+                            fused_logit = alpha * logit_f + (1 - alpha) * logit_b
+
+                            # Apply sigmoid to get probabilities
+                            prob = sigmoid(fused_logit)
+
+                            # Threshold to bool
+                            mask = (prob > thresh).bool().numpy()
+
+                            fused_masks[t][obj_id] = mask
+                        else:
+                            logit_f = frame_logits_f[obj_id]
+                            fused_logit = logit_f
+                            prob = sigmoid(fused_logit)
+                            mask = (prob > thresh).bool().numpy()
+                            fused_masks[t][obj_id] = mask
+                elif t in video_logits_f:
+                    print(f"Using forward masks for frame {t}")
+                    if t not in fused_masks:
+                        fused_masks[t] = {}
+                    for obj_id, logit in video_logits_f[t].items():
+                        fused_masks[t][obj_id] = (sigmoid(logit) > thresh).bool().numpy()
+                elif t in video_logits_b:
+                    print(f"Using reverse masks for frame {t}")
+                    if t not in fused_masks:
+                        fused_masks[t] = {}
+                    for obj_id, logit in video_logits_b[t].items():
+                        fused_masks[t][obj_id] = (sigmoid(logit) > thresh).bool().numpy()
+                else:
+                    print(f"No masks found for frame {t}")
 
         return fused_masks
 
