@@ -23,13 +23,14 @@ class CustomMEDSAM2():
             predictor: MEDSAM2 predictor
         """
         # Initialize predictor
-        self.predictor = build_sam2_video_predictor(
+        predictor = build_sam2_video_predictor(
             config_file= self.config_filepath,
             ckpt_path= self.checkpoint_filepath,
             apply_postprocessing=True,
             # hydra_overrides_extra=hydra_overrides_extra,
             vos_optimized=  True,
         )
+        return predictor
 
     def _predict_mask(self, predictor, inference_state, frame_idx, prompt_mask, reverse=False):
         """
@@ -70,7 +71,7 @@ class CustomMEDSAM2():
             }
         return predicted_masks, predicted_logits
 
-    def _propagate_single_direction(self,  class_id, reverse=False):
+    def _propagate_single_direction(self, class_id, reverse=False):
         """
         Forward or backward pass for segmentation prediction. Uses ground truth masks for keyframes, otherwise uses previous prediction.
         Inputs:
@@ -85,83 +86,54 @@ class CustomMEDSAM2():
         IMAGE_DATASET_FOLDER_PATH = import_data_from_roboflow.get_image_dataset_folder_path()
 
         # Initialize SAM model
-        self.initialize_new_predictor_state()
-        inference_state = self.predictor.init_state(video_path=IMAGE_DATASET_FOLDER_PATH, async_loading_frames=False)
+        predictor = self.initialize_new_predictor_state()
+        inference_state = predictor.init_state(video_path=IMAGE_DATASET_FOLDER_PATH, async_loading_frames=False)
 
         output_masks_logit = {}
         output_masks_binary = {}
         
         frame_names = import_data_from_roboflow.list_all_images()
-        
+
         # First handle frames before first keyframe - no predictions
+        first_keyframe_idx = keyframe_indices[::-1] if reverse else keyframe_indices[0]
         if not reverse:
-            first_keyframe_idx = keyframe_indices[0]
-            for frame_idx in range(0, first_keyframe_idx):
-                output_masks_binary[frame_idx] = {class_id: None}
-                output_masks_logit[frame_idx] = {class_id: None}
+            skip_range = range(0, first_keyframe_idx)
         else:
-            first_keyframe_idx = keyframe_indices[-1]
-            for frame_idx in range(first_keyframe_idx, len(frame_names)-1):
-                output_masks_binary[frame_idx] = {class_id: None}
-                output_masks_logit[frame_idx] = {class_id: None}
+            skip_range = range(first_keyframe_idx, len(frame_names))
         
+        for frame_idx in skip_range:
+            output_masks_binary[frame_idx] = {class_id: None}
+            output_masks_logit[frame_idx] = {class_id: None}
+
         if not reverse:
-            for i in range(first_keyframe_idx, len(frame_names)):
-
-                if i in keyframe_indices:
-                    # If i is a keyframe, use ground truth mask
-                    gt_mask = import_data_from_roboflow.get_mask(frame_names[i], class_id)
-                    gt_mask = np.array(gt_mask).astype(np.uint8)
-                
-                    # Add ground truth mask as conditioning frame
-                    self.predictor.add_new_mask(
-                        inference_state=inference_state,
-                        frame_idx=i,
-                        obj_id=class_id,
-                        mask=gt_mask,
-                    )
-
-                    predicted_mask, predicted_logits = {class_id: gt_mask}, {class_id: gt_mask}
-                
-                else:
-                    predicted_mask, predicted_logits = self._predict_mask(
-                        self.predictor, 
-                        inference_state, 
-                        i, 
-                        output_masks_binary[i-1])
-
-                output_masks_binary[i] = predicted_mask
-                output_masks_logit[i] = predicted_logits
+            process_range = range(first_keyframe_idx, len(frame_names))
         else:
-            for i in range(first_keyframe_idx, -1, -1):
+            process_range = range(first_keyframe_idx, -1, -1)
 
-                if i in keyframe_indices:
-                    # If i is a keyframe, use ground truth mask
-                    gt_mask = import_data_from_roboflow.get_mask(frame_names[i], class_id)
-                    gt_mask = np.array(gt_mask).astype(np.uint8)
-                
-                    # Add ground truth mask as conditioning frame
-                    self.predictor.add_new_mask(
-                        inference_state=inference_state,
-                        frame_idx=i,
-                        obj_id=class_id,
-                        mask=gt_mask,
-                    )
-                    predicted_mask, predicted_logits = {class_id: gt_mask}, {class_id: gt_mask}
-                
-                else:
-                    predicted_mask, predicted_logits = self._predict_mask(
-                        self.predictor, 
-                        inference_state, 
-                        i, 
-                        output_masks_binary[i+1],
-                        reverse=True)
-
-                output_masks_binary[i] = predicted_mask
-                output_masks_logit[i] = predicted_logits
+        for i in process_range:
+            if i in keyframe_indices:
+                gt_mask = np.array(import_data_from_roboflow.get_mask(frame_names[i], class_id)).astype(np.uint8)
+                predictor.add_new_mask(
+                    inference_state=inference_state,
+                    frame_idx=i,
+                    obj_id=class_id,
+                    mask=gt_mask,
+                )
+                predicted_mask = {class_id: gt_mask}
+                predicted_logits = {class_id: gt_mask}
+            else:
+                prev_idx = i - 1 if not reverse else i + 1
+                predicted_mask, predicted_logits = self._predict_mask(
+                    predictor,
+                    inference_state,
+                    i,
+                    output_masks_binary[prev_idx],
+                    reverse=reverse
+                )
+            output_masks_binary[i] = predicted_mask
+            output_masks_logit[i] = predicted_logits
 
         return output_masks_binary, output_masks_logit
-
 
     def propagate(self, class_id):
         """
