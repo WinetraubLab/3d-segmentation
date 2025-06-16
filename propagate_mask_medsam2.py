@@ -3,6 +3,7 @@ import os
 import cv2
 import matplotlib.pyplot as plt
 from torch.nn.functional import sigmoid
+import torch
 
 from MedSAM2.sam2.build_sam import build_sam2_video_predictor
 import import_data_from_roboflow
@@ -105,7 +106,7 @@ class CustomMEDSAM2():
                 video_logits[frame_idx] = {class_id: None}
         
         if not reverse:
-            for i in range(first_keyframe_idx, len(frame_names)-1):
+            for i in range(first_keyframe_idx, len(frame_names)):
 
                 if i in keyframe_indices:
                     # If i is a keyframe, use ground truth mask
@@ -119,7 +120,8 @@ class CustomMEDSAM2():
                         obj_id=class_id,
                         mask=gt_mask,
                     )
-                    predicted_mask, predicted_logits = gt_mask, gt_mask
+
+                    predicted_mask, predicted_logits = {class_id: gt_mask}, {class_id: gt_mask}
                 
                 else:
                     predicted_mask, predicted_logits = self.predict_mask(
@@ -131,7 +133,7 @@ class CustomMEDSAM2():
                 video_segments[i] = predicted_mask
                 video_logits[i] = predicted_logits
         else:
-            for i in range(first_keyframe_idx, 0, -1):
+            for i in range(first_keyframe_idx, -1, -1):
 
                 if i in keyframe_indices:
                     # If i is a keyframe, use ground truth mask
@@ -145,7 +147,7 @@ class CustomMEDSAM2():
                         obj_id=class_id,
                         mask=gt_mask,
                     )
-                    predicted_mask, predicted_logits = gt_mask, gt_mask
+                    predicted_mask, predicted_logits = {class_id: gt_mask}, {class_id: gt_mask}
                 
                 else:
                     predicted_mask, predicted_logits = self.predict_mask(
@@ -189,7 +191,6 @@ class CustomMEDSAM2():
             fused_masks: dictionary of merged masks for each frame
         """
         fused_masks = {}
-        frame_names = import_data_from_roboflow.list_all_images()
         keyframe_indices = import_data_from_roboflow.get_keyframe_indices(class_id)
 
         # For each pair of consecutive keyframes
@@ -214,6 +215,8 @@ class CustomMEDSAM2():
                             fused_logit = alpha * logit_f + (1 - alpha) * logit_b
 
                             # Apply sigmoid to get probabilities
+                            if not isinstance(fused_logit, torch.Tensor):
+                                fused_logit = torch.tensor(fused_logit)
                             prob = sigmoid(fused_logit)
 
                             # Threshold to bool
@@ -230,20 +233,24 @@ class CustomMEDSAM2():
                     print(f"Using forward masks for frame {t}")
                     if t not in fused_masks:
                         fused_masks[t] = {}
-                    for obj_id, logit in video_logits_f[t].items():
-                        fused_masks[t][obj_id] = (sigmoid(logit) > thresh).bool().numpy()
+                    for logit in video_logits_f[t]:
+                        if not isinstance(logit, torch.Tensor):
+                            logit = torch.tensor(logit)
+                        fused_masks[t] = (sigmoid(logit) > thresh).bool().numpy()
                 elif t in video_logits_b:
                     print(f"Using reverse masks for frame {t}")
                     if t not in fused_masks:
                         fused_masks[t] = {}
-                    for obj_id, logit in video_logits_b[t].items():
-                        fused_masks[t][obj_id] = (sigmoid(logit) > thresh).bool().numpy()
+                    for logit in video_logits_b[t]:
+                        if not isinstance(logit, torch.Tensor):
+                            logit = torch.tensor(logit)
+                        fused_masks[t] = (sigmoid(logit) > thresh).bool().numpy()
                 else:
                     print(f"No masks found for frame {t}")
 
         return fused_masks
 
-def combine_class_masks(indiv_class_masks_list, frame_names, output_dir=None, show=True):
+def combine_class_masks(indiv_class_masks_list, output_dir=None, show=True):
     """
     Combine multiple class masks into one mask. Different colors represent different classes.
     Inputs:
@@ -251,6 +258,7 @@ def combine_class_masks(indiv_class_masks_list, frame_names, output_dir=None, sh
         output_dir: directory to write the output images to
         show: if True, show combined class masks
     """
+    frame_names = import_data_from_roboflow.list_all_images()
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
 
