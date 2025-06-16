@@ -61,18 +61,32 @@ class Test3dSegmentation(unittest.TestCase):
     def set_up_model(self):
         self.setUp()
         self.model = propagate_mask_medsam2.CustomMEDSAM2(self.MODEL_CONFIG, self.MODEL_CHECKPOINT)
+
+    def test_forward_pass(self):
+        self.set_up_model()
+        self.set_up_global_vars()
+        fused_masks = self.model._propagate_single_direction(1)
+        for f in fused_masks:
+            assert np.any(f)
+
+    def test_backward_pass(self):
+        self.set_up_model()
+        self.set_up_global_vars()
+        fused_masks = self.model._propagate_single_direction(1, reverse=True)
+        for f in fused_masks:
+            assert np.any(f)
     
     def test_propagate(self):
         self.set_up_model()
         self.set_up_global_vars()
-        fused_masks, frame_names = self.model.propagate_sequence(0)
+        fused_masks = self.model.propagate_sequence(1)
         for f in fused_masks:
             assert np.any(f)
 
     def test_combine_class_masks(self):
         self.set_up_model()
         self.set_up_global_vars()
-        fused_masks0, frame_names0 = self.model.propagate_sequence(0)
-        fused_masks1, frame_names1 = self.model.propagate_sequence(1)
+        fused_masks0 = self.model.propagate_sequence(0)
+        fused_masks1 = self.model.propagate_sequence(1)
         output_dir = "test_vectors/output_combined_masks/"
-        propagate_mask_medsam2.combine_class_masks([fused_masks0, fused_masks1], frame_names0, output_dir=output_dir, show=True)
+        propagate_mask_medsam2.combine_class_masks([fused_masks0, fused_masks1], output_dir=output_dir, show=True)
