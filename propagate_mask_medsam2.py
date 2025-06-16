@@ -183,57 +183,52 @@ class CustomMEDSAM2():
 
 def combine_class_masks(indiv_class_masks_list, output_dir=None, show=True):
     """
-    Combine multiple class masks into one mask. Different colors represent different classes.
+    Combine multiple class masks into one RGB image per frame.
     Inputs:
-        indiv_class_masks_list: list containing a dictionary of masks for each of n classes segmented
-        output_dir: directory to write the output images to
-        show: if True, show combined class masks
+        indiv_class_masks_list: list of lists; outer = per class, inner = per frame (2D array or None)
+        output_dir: if set, saves masks as images to here
+        show: if True, displays combined masks
     """
     frame_names = import_data_from_roboflow.list_all_images()
+    num_classes = len(indiv_class_masks_list)
+    num_frames = len(frame_names)
+
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
 
-    all_frame_indices = set()
-    for class_dict in indiv_class_masks_list:
-        all_frame_indices.update(class_dict.keys())
-    all_frame_indices = sorted(all_frame_indices)
-
-    for frame_idx in all_frame_indices:
+    for frame_idx in range(num_frames):
         masks = []
-        bins = []
-
-        # get binary masks for each class 
-        for class_mask_dict in indiv_class_masks_list:
-            class_masks = class_mask_dict.get(frame_idx, {})
-            if class_masks:
-                mask_array = list(class_masks.values())[0]
-                masks.append(mask_array)
-            else:
-                masks.append(None)
-
         h, w = None, None
-        for m in masks:
-            if m is not None:
-                m = m.squeeze()
-                h, w = m.shape
-                break
+
+        # Gather all masks for this frame
+        for class_idx in range(num_classes):
+            class_masks = indiv_class_masks_list[class_idx]
+            mask = class_masks[frame_idx] if frame_idx < len(class_masks) else None
+
+            if mask is not None:
+                mask = np.array(mask).squeeze()
+                if h is None or w is None:
+                    h, w = mask.shape
+            masks.append(mask)
+
         if h is None or w is None:
-            print(f"Skipping frame {frame_idx}: no masks available.")
+            print(f"Skipping frame {frame_idx}: no valid masks.")
             continue
 
-        #  fill masks
+        # Binarize masks
+        bins = []
         for m in masks:
             if m is not None:
-                bins.append((m > 0).astype(np.uint8).squeeze())
+                bins.append((m > 0).astype(np.uint8))
             else:
                 bins.append(np.zeros((h, w), dtype=np.uint8))
 
-        # first class takes priority
+        # Enforce class priority
         for i in range(len(bins) - 1, 0, -1):
             bins[i][bins[i - 1] == 1] = 0
 
+        # Assign colors
         rgb_mask = np.zeros((h, w, 3), dtype=np.uint8)
-        num_classes = len(bins)
         cmap = plt.get_cmap('Set3')
         colors = (np.array([cmap(i)[:3] for i in range(num_classes)]) * 255).astype(np.uint8)
 
