@@ -31,7 +31,7 @@ class CustomMEDSAM2():
             vos_optimized=  True,
         )
 
-    def predict_mask(self, predictor, inference_state, frame_idx, prompt_mask, reverse=False):
+    def _predict_mask(self, predictor, inference_state, frame_idx, prompt_mask, reverse=False):
         """
         Given an image and the input prompting mask, predict the mask for the image.
         Inputs:
@@ -77,19 +77,19 @@ class CustomMEDSAM2():
             class_id: class ID to segment
             reverse: if True, perform backward pass
         Returns:
-            video_segments: pass predictions
-            video_logits: pass logits
+            output_masks_binary: pass predictions
+            output_masks_logit: pass logits
         """
         keyframe_indices = import_data_from_roboflow.get_keyframe_indices(class_id)
         global IMAGE_DATASET_FOLDER_PATH
         IMAGE_DATASET_FOLDER_PATH = import_data_from_roboflow.get_image_dataset_folder_path()
 
-        # new predictor state for forward pass
+        # Initialize SAM model
         self.initialize_new_predictor_state()
         inference_state = self.predictor.init_state(video_path=IMAGE_DATASET_FOLDER_PATH, async_loading_frames=False)
 
-        video_logits = {}
-        video_segments = {}
+        output_masks_logit = {}
+        output_masks_binary = {}
         
         frame_names = import_data_from_roboflow.list_all_images()
         
@@ -97,13 +97,13 @@ class CustomMEDSAM2():
         if not reverse:
             first_keyframe_idx = keyframe_indices[0]
             for frame_idx in range(0, first_keyframe_idx):
-                video_segments[frame_idx] = {class_id: None}
-                video_logits[frame_idx] = {class_id: None}
+                output_masks_binary[frame_idx] = {class_id: None}
+                output_masks_logit[frame_idx] = {class_id: None}
         else:
             first_keyframe_idx = keyframe_indices[-1]
             for frame_idx in range(first_keyframe_idx, len(frame_names)-1):
-                video_segments[frame_idx] = {class_id: None}
-                video_logits[frame_idx] = {class_id: None}
+                output_masks_binary[frame_idx] = {class_id: None}
+                output_masks_logit[frame_idx] = {class_id: None}
         
         if not reverse:
             for i in range(first_keyframe_idx, len(frame_names)):
@@ -124,14 +124,14 @@ class CustomMEDSAM2():
                     predicted_mask, predicted_logits = {class_id: gt_mask}, {class_id: gt_mask}
                 
                 else:
-                    predicted_mask, predicted_logits = self.predict_mask(
+                    predicted_mask, predicted_logits = self._predict_mask(
                         self.predictor, 
                         inference_state, 
                         i, 
-                        video_segments[i-1])
+                        output_masks_binary[i-1])
 
-                video_segments[i] = predicted_mask
-                video_logits[i] = predicted_logits
+                output_masks_binary[i] = predicted_mask
+                output_masks_logit[i] = predicted_logits
         else:
             for i in range(first_keyframe_idx, -1, -1):
 
@@ -150,47 +150,46 @@ class CustomMEDSAM2():
                     predicted_mask, predicted_logits = {class_id: gt_mask}, {class_id: gt_mask}
                 
                 else:
-                    predicted_mask, predicted_logits = self.predict_mask(
+                    predicted_mask, predicted_logits = self._predict_mask(
                         self.predictor, 
                         inference_state, 
                         i, 
-                        video_segments[i+1],
+                        output_masks_binary[i+1],
                         reverse=True)
 
-                video_segments[i] = predicted_mask
-                video_logits[i] = predicted_logits
+                output_masks_binary[i] = predicted_mask
+                output_masks_logit[i] = predicted_logits
 
-        return video_segments, video_logits
+        return output_masks_binary, output_masks_logit
 
 
-    def propagate_sequence(self, class_id):
+    def propagate(self, class_id):
         """
         Perform a global forward pass followed by a global backward pass, for specified class.
         Inputs:
             class_id: COCO class id to segment
         Returns:
-            fused_masks (dict): Predicted mask for each image
-            frame_names (list): list of image file names, in order
+            output_masks (dict): Predicted mask for each image
         """
-        video_segments_f, video_logits_f = self._propagate_single_direction(class_id)
-        video_segments_b, video_logits_b = self._propagate_single_direction(class_id, reverse=True)
+        output_masks_binary_f, output_masks_logit_f = self._propagate_single_direction(class_id)
+        output_masks_binary_b, output_masks_logit_b = self._propagate_single_direction(class_id, reverse=True)
         
         # Merge forward and backward predictions
-        fused_masks = self.merge_bidirectional_masks(video_logits_f, video_logits_b, class_id)
-        return fused_masks
+        output_masks = self._merge_bidirectional_masks(output_masks_logit_f, output_masks_logit_b, class_id)
+        return output_masks
 
-    def merge_bidirectional_masks(self, video_logits_f, video_logits_b, class_id, thresh=0.5):
+    def _merge_bidirectional_masks(self, output_masks_logit_f, output_masks_logit_b, class_id, thresh=0.5):
         """
         Merge forward and backward predictions using distance-weighted fusion between keyframe pairs.
         Inputs:
-            video_logits_f: forward pass logits for all frames
-            video_logits_b: backward pass logits for all frames
+            output_masks_logit_f: forward pass logits for all frames
+            output_masks_logit_b: backward pass logits for all frames
             class_id: class ID being segmented
             thresh: threshold for binary mask conversion
         Returns:
-            fused_masks: dictionary of merged masks for each frame
+            output_masks: dictionary of merged masks for each frame
         """
-        fused_masks = {}
+        output_masks = {}
         keyframe_indices = import_data_from_roboflow.get_keyframe_indices(class_id)
 
         # For each pair of consecutive keyframes
@@ -200,10 +199,10 @@ class CustomMEDSAM2():
             
             # Merge masks for frames between this keyframe pair
             for t in range(start_idx, end_idx + 1):
-                if t in video_logits_f and t in video_logits_b:
-                    frame_logits_f = video_logits_f[t]
-                    frame_logits_b = video_logits_b[t]
-                    fused_masks[t] = {}
+                if t in output_masks_logit_f and t in output_masks_logit_b:
+                    frame_logits_f = output_masks_logit_f[t]
+                    frame_logits_b = output_masks_logit_b[t]
+                    output_masks[t] = {}
 
                     for obj_id in frame_logits_f.keys():
                         if obj_id in frame_logits_b:
@@ -222,33 +221,33 @@ class CustomMEDSAM2():
                             # Threshold to bool
                             mask = (prob > thresh).bool().numpy()
 
-                            fused_masks[t][obj_id] = mask
+                            output_masks[t][obj_id] = mask
                         else:
                             logit_f = frame_logits_f[obj_id]
                             fused_logit = logit_f
                             prob = sigmoid(fused_logit)
                             mask = (prob > thresh).bool().numpy()
-                            fused_masks[t][obj_id] = mask
-                elif t in video_logits_f:
+                            output_masks[t][obj_id] = mask
+                elif t in output_masks_logit_f:
                     print(f"Using forward masks for frame {t}")
-                    if t not in fused_masks:
-                        fused_masks[t] = {}
-                    for logit in video_logits_f[t]:
+                    if t not in output_masks:
+                        output_masks[t] = {}
+                    for logit in output_masks_logit_f[t]:
                         if not isinstance(logit, torch.Tensor):
                             logit = torch.tensor(logit)
-                        fused_masks[t] = (sigmoid(logit) > thresh).bool().numpy()
-                elif t in video_logits_b:
+                        output_masks[t] = (sigmoid(logit) > thresh).bool().numpy()
+                elif t in output_masks_logit_b:
                     print(f"Using reverse masks for frame {t}")
-                    if t not in fused_masks:
-                        fused_masks[t] = {}
-                    for logit in video_logits_b[t]:
+                    if t not in output_masks:
+                        output_masks[t] = {}
+                    for logit in output_masks_logit_b[t]:
                         if not isinstance(logit, torch.Tensor):
                             logit = torch.tensor(logit)
-                        fused_masks[t] = (sigmoid(logit) > thresh).bool().numpy()
+                        output_masks[t] = (sigmoid(logit) > thresh).bool().numpy()
                 else:
                     print(f"No masks found for frame {t}")
 
-        return fused_masks
+        return output_masks
 
 def combine_class_masks(indiv_class_masks_list, output_dir=None, show=True):
     """
