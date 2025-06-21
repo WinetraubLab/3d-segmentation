@@ -147,7 +147,7 @@ class CustomMEDSAM2():
 
         return output_masks_binary, output_masks_logit
 
-    def propagate(self, binary_segmentations, sigma_xy=0, sigma_z=0, prob_thresh=0.5):
+    def propagate(self, binary_segmentations, sigma_xy=0.0, sigma_z=0.0, prob_thresh=0.5):
         """
         This function will initialize a model from sparse segmentation and propagate the segmentation to all frames.
         Inputs:
