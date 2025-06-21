@@ -72,7 +72,7 @@ def list_all_labels():
 
     # Count unique classes
     num_classes = len(class_ids)
-    print(f"Total number of unique classes: {num_classes}")
+    # print(f"Total number of unique classes: {num_classes}")
 
     return class_ids
 

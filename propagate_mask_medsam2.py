@@ -74,8 +74,8 @@ class CustomMEDSAM2():
             class_id: class ID to segment
             reverse: if True, perform backward pass
         Returns:
-            output_masks_binary: list of binary mask predictions. None if none
-            output_masks_logit: list of logits for mask predictions. None if none
+            output_masks_binary: list of binary mask predictions (ndarray). None if none
+            output_masks_logit: list of logits for mask predictions (ndarray). None if none
         """
         keyframe_indices = import_data_from_roboflow.get_keyframe_indices(class_id)
         global IMAGE_DATASET_FOLDER_PATH
@@ -84,10 +84,11 @@ class CustomMEDSAM2():
         # Initialize SAM model
         predictor = self.initialize_new_predictor_state()
         inference_state = predictor.init_state(video_path=IMAGE_DATASET_FOLDER_PATH, async_loading_frames=False)
+        mask_shape = import_data_from_roboflow.get_mask(frame_names[0], class_id)
 
         frame_names = import_data_from_roboflow.list_all_images()
-        output_masks_logit = [None] * len(frame_names)
-        output_masks_binary = [None] * len(frame_names)
+        output_masks_logit = [np.full(mask_shape, np.nan) for _ in frame_names]
+        output_masks_binary = [np.full(mask_shape, np.nan) for _ in frame_names]
         first_keyframe_idx = keyframe_indices[-1] if reverse else keyframe_indices[0]
 
         # range of valid indices to propagate segmentations through
@@ -112,8 +113,8 @@ class CustomMEDSAM2():
                 # otherwise, predict current mask using previous frame
                 prev_idx = process_range[i-1]
                 if prev_idx < 0 or prev_idx >= len(frame_names) or output_masks_binary[prev_idx] is None:
-                    predicted_mask = None
-                    predicted_logits = None
+                    predicted_mask = np.full(mask_shape, np.nan)
+                    predicted_logits = np.full(mask_shape, np.nan)
 
                 predicted_mask, predicted_logits = self._predict_mask(
                     predictor,
@@ -130,11 +131,14 @@ class CustomMEDSAM2():
 
         return output_masks_binary, output_masks_logit
 
-    def propagate(self, class_id, sigma_xy=0, sigma_z=0):
+    def propagate(self, class_id, sigma_xy=0, sigma_z=0, prob_thresh=0.5):
         """
         This function will initialize a model from sparse segmentation and propagate the segmentation to all frames.
         Inputs:
             class_id: COCO class id to segment
+            sigma_xy: gaussian smoothing sigma on x and y axes
+            sigma_z: gaussian smoothing sigma on z axis
+            prob_thresh: probability threshold; values above this are set to 1 in the binary mask.
         Returns:
             output_masks (array): shape (z,x,y) predicted masks for each image. NaN for slices with no predictions.
         """
@@ -142,55 +146,11 @@ class CustomMEDSAM2():
         mask_binary_backward, mask_logit_backward = self._propagate_single_direction(class_id, reverse=True)
         
         # Merge forward and backward predictions
-        output_masks = self._merge_bidirectional_masks(mask_logit_forward, mask_logit_backward, class_id)
-        output_masks = gaussian_filter(np.squeeze(np.array(output_masks)), sigma=(sigma_z, sigma_xy, sigma_xy))
-        return output_masks
-    
-    def _merge_bidirectional_masks(self, mask_logit_forward, mask_logit_backward, class_id, thresh=0.5):
-        """
-        Merge forward and backward predictions using distance-weighted fusion between keyframe pairs.
-        Inputs:
-            mask_logit_forward: list of 2D arrays or [] from forward pass
-            mask_logit_backward: list of 2D arrays or [] from backward pass
-            class_id: class ID being segmented
-            thresh: threshold for binary mask conversion
-        Returns:
-            output_masks: list of binary masks (numpy arrays) for each frame.
-        """
-        frame_names = import_data_from_roboflow.list_all_images()
-        output_masks = [None] * len(frame_names)
-        keyframe_indices = import_data_from_roboflow.get_keyframe_indices(class_id)
+        avg_logits = torch.tensor(np.nanmean(np.stack([mask_logit_forward, mask_logit_backward]), axis=0))
+        prob = torch.sigmoid(avg_logits)
+        masks = (prob > prob_thresh).bool().cpu().numpy()
 
-        for i in range(len(keyframe_indices) - 1):
-            start_idx = keyframe_indices[i]
-            end_idx = keyframe_indices[i + 1]
-
-            for t in range(start_idx, end_idx + 1):
-                logit_f = mask_logit_forward[t] if mask_logit_forward[t] is not None else None
-                logit_b = mask_logit_backward[t] if mask_logit_backward[t] is not None else None
-
-                if logit_f is not None and logit_b is not None:
-                    alpha = (end_idx - t) / (end_idx - start_idx + 1e-5)  # avoid div by zero
-                    logit_f = torch.tensor(logit_f)
-                    logit_b = torch.tensor(logit_b)
-                    fused_logit = alpha * logit_f + (1 - alpha) * logit_b
-                elif logit_f is not None:
-                    fused_logit = torch.tensor(logit_f)
-                elif logit_b is not None:
-                    fused_logit = torch.tensor(logit_b)
-                else:
-                    print(f"No logits found for frame {t}")
-                    continue
-
-                prob = torch.sigmoid(fused_logit)
-                mask = (prob > thresh).bool().numpy()
-                output_masks[t] = mask
-                mask_shape = mask.shape
-
-        output_masks = [
-            np.full(mask_shape, np.nan) if mask is None else mask
-            for mask in output_masks
-        ]
+        output_masks = gaussian_filter(np.squeeze(np.array(masks)), sigma=(sigma_z, sigma_xy, sigma_xy))
         return output_masks
 
 def combine_class_masks(indiv_class_masks_list, output_dir=None, show=True):
