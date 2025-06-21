@@ -83,6 +83,13 @@ class Test3dSegmentation(unittest.TestCase):
         for f in output_masks:
             assert np.any(f)
 
+    def test_propagate_with_smoothing(self):
+        self.set_up_model()
+        self.set_up_global_vars()
+        output_masks = self.model.propagate(1, 3, 5)
+        for f in output_masks:
+            assert np.any(f)
+    
     def test_combine_class_masks(self):
         self.set_up_model()
         self.set_up_global_vars()

@@ -4,6 +4,7 @@ import cv2
 import matplotlib.pyplot as plt
 from torch.nn.functional import sigmoid
 import torch
+from scipy.ndimage import gaussian_filter
 
 from MedSAM2.sam2.build_sam import build_sam2_video_predictor
 import import_data_from_roboflow
@@ -106,7 +107,7 @@ class CustomMEDSAM2():
                 predicted_mask = gt_mask
                 predicted_logits = gt_mask
             else:
-                prev_idx = i - 1 if not reverse else i + 1
+                prev_idx = process_range[i-1]
                 if prev_idx < 0 or prev_idx >= len(frame_names) or output_masks_binary[prev_idx] is None:
                     predicted_mask = None
                     predicted_logits = None
@@ -119,12 +120,14 @@ class CustomMEDSAM2():
                     class_id,
                     reverse=reverse
                 )
-            output_masks_binary[i] = predicted_mask
-            output_masks_logit[i] = predicted_logits
+                predicted_logits = predicted_logits.cpu().numpy()
+                
+            output_masks_binary[i] = np.squeeze(predicted_mask)
+            output_masks_logit[i] = np.squeeze(predicted_logits)
 
         return output_masks_binary, output_masks_logit
 
-    def propagate(self, class_id):
+    def propagate(self, class_id, sigma_xy=0, sigma_z=0):
         """
         Perform a global forward pass followed by a global backward pass, for specified class.
         Inputs:
@@ -137,6 +140,7 @@ class CustomMEDSAM2():
         
         # Merge forward and backward predictions
         output_masks = self._merge_bidirectional_masks(output_masks_logit_f, output_masks_logit_b, class_id)
+        output_masks = gaussian_filter(np.squeeze(np.array(output_masks)), sigma=(sigma_z, sigma_xy, sigma_xy))
         return output_masks
     
     def _merge_bidirectional_masks(self, output_masks_logit_f, output_masks_logit_b, class_id, thresh=0.5):
@@ -159,8 +163,8 @@ class CustomMEDSAM2():
             end_idx = keyframe_indices[i + 1]
 
             for t in range(start_idx, end_idx + 1):
-                logit_f = output_masks_logit_f[t] if output_masks_logit_f[t] else None
-                logit_b = output_masks_logit_b[t] if output_masks_logit_b[t] else None
+                logit_f = output_masks_logit_f[t] if output_masks_logit_f[t] is not None else None
+                logit_b = output_masks_logit_b[t] if output_masks_logit_b[t] is not None else None
 
                 if logit_f is not None and logit_b is not None:
                     alpha = (end_idx - t) / (end_idx - start_idx + 1e-5)  # avoid div by zero
@@ -178,7 +182,12 @@ class CustomMEDSAM2():
                 prob = torch.sigmoid(fused_logit)
                 mask = (prob > thresh).bool().numpy()
                 output_masks[t] = mask
+                mask_shape = mask.shape
 
+        output_masks = [
+            np.full(mask_shape, np.nan) if mask is None else mask
+            for mask in output_masks
+        ]
         return output_masks
 
 def combine_class_masks(indiv_class_masks_list, output_dir=None, show=True):
