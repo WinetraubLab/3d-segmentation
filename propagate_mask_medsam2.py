@@ -66,25 +66,41 @@ class CustomMEDSAM2():
                     return mask, logit
 
         return None, None 
+    
+    def _get_keyframe_indices_from_sparse_segmentations(self, binary_segmentations):
+        """
+        Inputs:
+            binary_segmentations: array containing binary segmentation mask for some frames. if no binary segmentation mask for a certain
+                frame, it will be NaN
+        Returns:
+            keyframe_indices: list of indices where there is a valid seg mask
+        """
+        all_nan = np.isnan(binary_segmentations).all(axis=(1, 2))
+        not_all_nan = ~all_nan
+        keyframe_indices = np.where(not_all_nan)[0]
+        return keyframe_indices
 
-    def _propagate_single_direction(self, class_id, reverse=False):
+    def _propagate_single_direction(self, binary_segmentations, reverse=False):
         """
         Forward or backward pass for segmentation prediction. Uses ground truth masks for keyframes, otherwise uses previous prediction.
         Inputs:
-            class_id: class ID to segment
+            binary_segmentations: array containing binary segmentation mask for some frames. if no binary segmentation mask for a certain
+                frame, it will be NaN
             reverse: if True, perform backward pass
         Returns:
             output_masks_binary: list of binary mask predictions (ndarray). None if none
             output_masks_logit: list of logits for mask predictions (ndarray). None if none
         """
-        keyframe_indices = import_data_from_roboflow.get_keyframe_indices(class_id)
         global IMAGE_DATASET_FOLDER_PATH
         IMAGE_DATASET_FOLDER_PATH = import_data_from_roboflow.get_image_dataset_folder_path()
+
+        # get valid segmentation indices
+        keyframe_indices = self._get_keyframe_indices_from_sparse_segmentations(binary_segmentations)
 
         # Initialize SAM model
         predictor = self.initialize_new_predictor_state()
         inference_state = predictor.init_state(video_path=IMAGE_DATASET_FOLDER_PATH, async_loading_frames=False)
-        mask_shape = import_data_from_roboflow.get_mask(frame_names[0], class_id)
+        mask_shape = binary_segmentations[keyframe_indices[0]].shape
 
         frame_names = import_data_from_roboflow.list_all_images()
         output_masks_logit = [np.full(mask_shape, np.nan) for _ in frame_names]
@@ -100,11 +116,11 @@ class CustomMEDSAM2():
         for i in process_range:
             if i in keyframe_indices:
                 # if mask segmentation is known, set mask and logits
-                gt_mask = np.array(import_data_from_roboflow.get_mask(frame_names[i], class_id)).astype(np.uint8)
+                gt_mask = binary_segmentations[i]
                 predictor.add_new_mask(
                     inference_state=inference_state,
                     frame_idx=i,
-                    obj_id=class_id,
+                    obj_id=0,
                     mask=gt_mask,
                 )
                 predicted_mask = gt_mask
@@ -121,7 +137,7 @@ class CustomMEDSAM2():
                     inference_state,
                     i,
                     output_masks_binary[prev_idx], 
-                    class_id,
+                    0,
                     reverse=reverse
                 )
                 predicted_logits = predicted_logits.cpu().numpy()
@@ -131,19 +147,20 @@ class CustomMEDSAM2():
 
         return output_masks_binary, output_masks_logit
 
-    def propagate(self, class_id, sigma_xy=0, sigma_z=0, prob_thresh=0.5):
+    def propagate(self, binary_segmentations, sigma_xy=0, sigma_z=0, prob_thresh=0.5):
         """
         This function will initialize a model from sparse segmentation and propagate the segmentation to all frames.
         Inputs:
-            class_id: COCO class id to segment
+            binary_segmentations: array containing binary segmentation mask for some frames. if no binary segmentation mask for a certain
+                frame, it will be NaN
             sigma_xy: gaussian smoothing sigma on x and y axes
             sigma_z: gaussian smoothing sigma on z axis
             prob_thresh: probability threshold; values above this are set to 1 in the binary mask.
         Returns:
             output_masks (array): shape (z,x,y) predicted masks for each image. NaN for slices with no predictions.
         """
-        mask_binary_forward, mask_logit_forward = self._propagate_single_direction(class_id)
-        mask_binary_backward, mask_logit_backward = self._propagate_single_direction(class_id, reverse=True)
+        mask_binary_forward, mask_logit_forward = self._propagate_single_direction(binary_segmentations)
+        mask_binary_backward, mask_logit_backward = self._propagate_single_direction(binary_segmentations, reverse=True)
         
         # Merge forward and backward predictions
         avg_logits = torch.tensor(np.nanmean(np.stack([mask_logit_forward, mask_logit_backward]), axis=0))

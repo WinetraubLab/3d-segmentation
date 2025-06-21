@@ -91,39 +91,83 @@ def list_all_images():
     image_names = list(sorted(image_names))
     return image_names
 
-def get_keyframe_indices(class_id):
+def get_mask(image_name, class_id):
     """
-    Gets the indices of the annotated segmentations wrt the image stack to segment.
-    Inputs:
-        coco_path: path to the COCO-format annotation JSON file.
-        image_dataset_folder_path: path to directory containing image sequence.
-        class_id: COCO category id to return keyframe indices for.
+    Inputs: 
+        image_name: name of image
+        class_id: integer representing the class to get the segmentation mask for
     Returns:
-        keyframe_indices: Indices of images in the sequence that have annotations for the specified class.
+        mask: binary mask for the image and class
     """
     global COCO_PATH
-    global IMAGE_DATASET_FOLDER_PATH
+    file_name = os.path.basename(image_name)
+
     with open(COCO_PATH, 'r') as f:
         coco = json.load(f)
 
-    ann_ids = sorted(list({ann["image_id"] for ann in coco["annotations"] if ann['category_id'] == class_id}))
+    image_id_map = {img["file_name"]: img["id"] for img in coco["images"]}
+    image_info_map = {img["id"]: img for img in coco["images"]}
+    annotations_per_image = defaultdict(list)
+    for ann in coco["annotations"]:
+        annotations_per_image[ann["image_id"]].append(ann)
 
-    keyframe_filenames = [
-        img['file_name'].split(".")[0] if 'file_name' in img else img['name']
-        for img in coco['images']
-        if img['id'] in ann_ids
-    ]
+    if file_name not in image_id_map:
+        raise ValueError(f"Image {file_name} not found in COCO annotations.")
 
-    frame_names = list_all_images()
+    image_id = image_id_map[file_name]
+    image_info = image_info_map[image_id]
+    height, width = image_info["height"], image_info["width"]
 
-    keyframe_indices = {0, len(frame_names)-1}
-    for ann in keyframe_filenames:
-        for i, name in enumerate(frame_names):
-            if ann in name:
-                keyframe_indices.add(i)
+    # Create blank mask
+    mask = np.zeros((height, width), dtype=np.uint8)
 
-    keyframe_indices = sorted(list(keyframe_indices))
-    return keyframe_indices
+    for ann in annotations_per_image[image_id]:
+        if ann["category_id"] != class_id:
+            continue
+        
+        segmentation = ann["segmentation"]
+        if ann.get("iscrowd", 0):
+            rle = mask_utils.frPyObjects([segmentation], height, width)
+            m = mask_utils.decode(rle[0])
+        else:
+            rle = mask_utils.frPyObjects(segmentation, height, width)
+            m = mask_utils.decode(rle)
+            if len(m.shape) == 3:
+                m = np.any(m, axis=2).astype(np.uint8)
+        
+        mask[m.astype(bool)] = 1  # Binary mask
+
+    return mask
+
+def create_mask_volume(class_id):
+    """
+    Inputs:
+        class_id: coco-annotation class for which to create the segmentation mask volume.
+    Returns:
+        mask_volume: array shape (z,x,y). array[z] will be NaN array if no segmentation mask is available for that frame,
+            otherwise it will be loaded from COCO annotation file.
+    """
+    global IMAGE_DATASET_FOLDER_PATH
+    
+    image_files = list_all_images()
+    image_paths = [os.path.join(IMAGE_DATASET_FOLDER_PATH, f) for f in image_files]
+    
+    # Load first image to get shape
+    sample_img = cv2.imread(image_paths[0], cv2.IMREAD_GRAYSCALE)
+    x, y = sample_img.shape
+    z = len(image_paths)
+    
+    # Initialize segmentation volume with NaNs
+    mask_volume = np.full((z, x, y), np.nan, dtype=np.float32)
+
+    for idx, image_f in enumerate(image_files):
+        try:
+            mask = get_mask(image_f, class_id)
+            mask_volume[idx] = mask.astype(np.float32)
+        except ValueError:
+            # Image not in annotations = leave slice as NaN
+            continue
+    return mask_volume
 
 def preprocess_images(original_images_path, preprocessed_images_path):
     """
@@ -179,54 +223,6 @@ def get_image(image_name):
                 return _clahe_normalize(cv2.imread(fpath))
     
     raise FileNotFoundError(f"No matching images for {image_name} were found under {IMAGE_DATASET_FOLDER_PATH}.")
-
-def get_mask(image_name, class_id):
-    """
-    Inputs: 
-        image_name: name of image
-        class_id: integer representing the class to get the segmentation mask for
-    Returns:
-        mask: binary mask for the image and class
-    """
-    global COCO_PATH
-    file_name = os.path.basename(image_name)
-
-    with open(COCO_PATH, 'r') as f:
-        coco = json.load(f)
-
-    image_id_map = {img["file_name"]: img["id"] for img in coco["images"]}
-    image_info_map = {img["id"]: img for img in coco["images"]}
-    annotations_per_image = defaultdict(list)
-    for ann in coco["annotations"]:
-        annotations_per_image[ann["image_id"]].append(ann)
-
-    if file_name not in image_id_map:
-        raise ValueError(f"Image {file_name} not found in COCO annotations.")
-
-    image_id = image_id_map[file_name]
-    image_info = image_info_map[image_id]
-    height, width = image_info["height"], image_info["width"]
-
-    # Create blank mask
-    mask = np.zeros((height, width), dtype=np.uint8)
-
-    for ann in annotations_per_image[image_id]:
-        if ann["category_id"] != class_id:
-            continue
-        
-        segmentation = ann["segmentation"]
-        if ann.get("iscrowd", 0):
-            rle = mask_utils.frPyObjects([segmentation], height, width)
-            m = mask_utils.decode(rle[0])
-        else:
-            rle = mask_utils.frPyObjects(segmentation, height, width)
-            m = mask_utils.decode(rle)
-            if len(m.shape) == 3:
-                m = np.any(m, axis=2).astype(np.uint8)
-        
-        mask[m.astype(bool)] = 1  # Binary mask
-
-    return mask
 
 def get_image_dataset_folder_path():
     global IMAGE_DATASET_FOLDER_PATH

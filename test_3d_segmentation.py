@@ -42,12 +42,6 @@ class Test3dSegmentation(unittest.TestCase):
         self.set_up_global_vars()
         image_names = import_data_from_roboflow.list_all_images()
         assert len(image_names) == 6
-
-    def test_get_kf_indices(self):
-        self.set_up_global_vars()
-        kf_indices = import_data_from_roboflow.get_keyframe_indices(0)
-        assert kf_indices[0] == 0
-        assert kf_indices[1] == 5
     
     def test_get_image(self):
         import_data_from_roboflow.get_image("y0124_png.rf.dbeef95400a14da233736fc6e7df31b9.jpg")
@@ -55,6 +49,10 @@ class Test3dSegmentation(unittest.TestCase):
     def test_get_mask(self):
         m = import_data_from_roboflow.get_mask("y0127_png.rf.d5e3bec4667f62e119206f3a34f617e0.jpg", 1)
         assert np.any(np.array(m))
+
+    def test_mask_volume(self):
+        segs = import_data_from_roboflow.create_mask_volume(1)
+        assert np.any(segs[0])
 
     # Model functions
     
@@ -75,6 +73,17 @@ class Test3dSegmentation(unittest.TestCase):
         output_masks = self.model._propagate_single_direction(1, reverse=True)
         for f in output_masks:
             assert np.any(f)
+
+    def test_get_kf_from_seg(self):
+        segmentations = np.array([
+            np.full((3, 4), np.nan),   
+            np.ones((3, 4)),
+            np.ones((3, 4)), 
+            np.full((3, 4), np.nan)   
+        ])
+        kf_idx = self.model._get_keyframe_indices_from_sparse_segmentations(segmentations)
+        assert kf_idx[0] == 1
+        assert kf_idx[1] == 2
     
     def test_propagate(self):
         self.set_up_model()
