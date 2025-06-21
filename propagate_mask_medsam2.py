@@ -90,6 +90,7 @@ class CustomMEDSAM2():
         output_masks_binary = [None] * len(frame_names)
         first_keyframe_idx = keyframe_indices[-1] if reverse else keyframe_indices[0]
 
+        # range of valid indices to propagate segmentations through
         if not reverse:
             process_range = range(first_keyframe_idx, len(frame_names))
         else:
@@ -97,6 +98,7 @@ class CustomMEDSAM2():
 
         for i in process_range:
             if i in keyframe_indices:
+                # if mask segmentation is known, set mask and logits
                 gt_mask = np.array(import_data_from_roboflow.get_mask(frame_names[i], class_id)).astype(np.uint8)
                 predictor.add_new_mask(
                     inference_state=inference_state,
@@ -105,8 +107,9 @@ class CustomMEDSAM2():
                     mask=gt_mask,
                 )
                 predicted_mask = gt_mask
-                predicted_logits = gt_mask
+                predicted_logits = (gt_mask * 20.0) - 10.0  # large positive where mask=1, large neg where mask=0
             else:
+                # otherwise, predict current mask using previous frame
                 prev_idx = process_range[i-1]
                 if prev_idx < 0 or prev_idx >= len(frame_names) or output_masks_binary[prev_idx] is None:
                     predicted_mask = None
@@ -129,26 +132,26 @@ class CustomMEDSAM2():
 
     def propagate(self, class_id, sigma_xy=0, sigma_z=0):
         """
-        Perform a global forward pass followed by a global backward pass, for specified class.
+        This function will initialize a model from sparse segmentation and propagate the segmentation to all frames.
         Inputs:
             class_id: COCO class id to segment
         Returns:
-            output_masks (dict): Predicted mask for each image
+            output_masks (array): shape (z,x,y) predicted masks for each image. NaN for slices with no predictions.
         """
-        output_masks_binary_f, output_masks_logit_f = self._propagate_single_direction(class_id)
-        output_masks_binary_b, output_masks_logit_b = self._propagate_single_direction(class_id, reverse=True)
+        mask_binary_forward, mask_logit_forward = self._propagate_single_direction(class_id)
+        mask_binary_backward, mask_logit_backward = self._propagate_single_direction(class_id, reverse=True)
         
         # Merge forward and backward predictions
-        output_masks = self._merge_bidirectional_masks(output_masks_logit_f, output_masks_logit_b, class_id)
+        output_masks = self._merge_bidirectional_masks(mask_logit_forward, mask_logit_backward, class_id)
         output_masks = gaussian_filter(np.squeeze(np.array(output_masks)), sigma=(sigma_z, sigma_xy, sigma_xy))
         return output_masks
     
-    def _merge_bidirectional_masks(self, output_masks_logit_f, output_masks_logit_b, class_id, thresh=0.5):
+    def _merge_bidirectional_masks(self, mask_logit_forward, mask_logit_backward, class_id, thresh=0.5):
         """
         Merge forward and backward predictions using distance-weighted fusion between keyframe pairs.
         Inputs:
-            output_masks_logit_f: list of 2D arrays or [] from forward pass
-            output_masks_logit_b: list of 2D arrays or [] from backward pass
+            mask_logit_forward: list of 2D arrays or [] from forward pass
+            mask_logit_backward: list of 2D arrays or [] from backward pass
             class_id: class ID being segmented
             thresh: threshold for binary mask conversion
         Returns:
@@ -163,8 +166,8 @@ class CustomMEDSAM2():
             end_idx = keyframe_indices[i + 1]
 
             for t in range(start_idx, end_idx + 1):
-                logit_f = output_masks_logit_f[t] if output_masks_logit_f[t] is not None else None
-                logit_b = output_masks_logit_b[t] if output_masks_logit_b[t] is not None else None
+                logit_f = mask_logit_forward[t] if mask_logit_forward[t] is not None else None
+                logit_b = mask_logit_backward[t] if mask_logit_backward[t] is not None else None
 
                 if logit_f is not None and logit_b is not None:
                     alpha = (end_idx - t) / (end_idx - start_idx + 1e-5)  # avoid div by zero
