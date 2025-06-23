@@ -14,25 +14,6 @@ class CustomMEDSAM2():
         self.config_filepath = config_filepath
         self.checkpoint_filepath = checkpoint_filepath
 
-    def initialize_new_predictor_state(self):
-        """
-        Initialize predictor for segmentation.
-        Inputs:
-            config_filepath: file path to configuration file.
-            checkpoint_filepath: file path to pre-trained checkpoint to load.
-        Returns:
-            predictor: MEDSAM2 predictor
-        """
-        # Initialize predictor
-        predictor = build_sam2_video_predictor(
-            config_file= self.config_filepath,
-            ckpt_path= self.checkpoint_filepath,
-            apply_postprocessing=True,
-            # hydra_overrides_extra=hydra_overrides_extra,
-            vos_optimized=  True,
-        )
-        return predictor
-
     def _predict_mask(self, predictor, inference_state, frame_idx, prompt_mask, class_id, reverse=False):
         """
         Given an image and the input prompting mask, predict the mask for the image.
@@ -88,28 +69,38 @@ class CustomMEDSAM2():
                 frame, it will be NaN
             reverse: if True, perform backward pass
         Returns:
-            output_masks_binary: list of binary mask predictions (ndarray). None if none
-            output_masks_logit: list of logits for mask predictions (ndarray). None if none
+            output_masks_binary: list of binary mask predictions (ndarray). NaN for a specific frame if no valid prediction 
+            output_masks_logit: list of logits for mask predictions (ndarray). NaN for a specific frame if no valid prediction 
         """
-        global IMAGE_DATASET_FOLDER_PATH
         IMAGE_DATASET_FOLDER_PATH = import_data_from_roboflow.get_image_dataset_folder_path()
 
         # get valid segmentation indices
         keyframe_indices = self._get_keyframe_indices_from_sparse_segmentations(binary_segmentations)
 
         # Initialize SAM model
-        predictor = self.initialize_new_predictor_state()
+        predictor = build_sam2_video_predictor(
+            config_file= self.config_filepath,
+            ckpt_path= self.checkpoint_filepath,
+            apply_postprocessing=True,
+            # hydra_overrides_extra=hydra_overrides_extra,
+            vos_optimized=  True,
+        )
         inference_state = predictor.init_state(video_path=IMAGE_DATASET_FOLDER_PATH, async_loading_frames=False)
         mask_shape = binary_segmentations[keyframe_indices[0]].shape
 
-        frame_names = import_data_from_roboflow.list_all_images()
-        output_masks_logit = [np.full(mask_shape, np.nan) for _ in frame_names]
-        output_masks_binary = [np.full(mask_shape, np.nan) for _ in frame_names]
+        image_extensions = [".jpg", ".jpeg", ".JPG", ".JPEG", ".png", ".PNG", ".tif", ".tiff", ".TIF", ".TIFF"]
+        n_frames =  sum(
+            1 for filename in os.listdir(IMAGE_DATASET_FOLDER_PATH)
+            if os.path.isfile(os.path.join(IMAGE_DATASET_FOLDER_PATH, filename)) and os.path.splitext(filename)[1] in image_extensions
+        )
+
+        output_masks_logit = [np.full(mask_shape, np.nan) for _ in n_frames]
+        output_masks_binary = [np.full(mask_shape, np.nan) for _ in n_frames]
         first_keyframe_idx = keyframe_indices[-1] if reverse else keyframe_indices[0]
 
         # range of valid indices to propagate segmentations through
         if not reverse:
-            process_range = range(first_keyframe_idx, len(frame_names))
+            process_range = range(first_keyframe_idx, n_frames)
         else:
             process_range = range(first_keyframe_idx, -1, -1)
 
@@ -128,7 +119,7 @@ class CustomMEDSAM2():
             else:
                 # otherwise, predict current mask using previous frame
                 prev_idx = process_range[i-1]
-                if prev_idx < 0 or prev_idx >= len(frame_names) or output_masks_binary[prev_idx] is None:
+                if prev_idx < 0 or prev_idx >= n_frames or output_masks_binary[prev_idx] is None:
                     predicted_mask = np.full(mask_shape, np.nan)
                     predicted_logits = np.full(mask_shape, np.nan)
 
@@ -151,13 +142,16 @@ class CustomMEDSAM2():
         """
         This function will initialize a model from sparse segmentation and propagate the segmentation to all frames.
         Inputs:
-            binary_segmentations: array containing binary segmentation mask for some frames. if no binary segmentation mask for a certain
-                frame, it will be NaN
+            binary_segmentations: array of masks, with each element corresponding to a different frame in a 3D volume. 
+                Elements in the array can either be NaN, indicating that no mask is provided for the specific frame (meaning we need to propagate to it), 
+                or a numpy array of shape (n, m), which specifies whether each pixel in the frame (with dimensions n by m) is inside (1) or outside (0) the mask (key frame).
+                For example, binary_segmentations = [NaN, zeros(n,m), NaN, NaN, zeros(n,m)] defines key frames in frames 1 and 4.
             sigma_xy: gaussian smoothing sigma on x and y axes
             sigma_z: gaussian smoothing sigma on z axis
             prob_thresh: probability threshold; values above this are set to 1 in the binary mask.
         Returns:
-            output_masks (array): shape (z,x,y) predicted masks for each image. NaN for slices with no predictions.
+            output_masks: 3D numpy matrix shape (z,x,y) that for each pixel defines if it's inside (1) or outside (0) a mask. 
+                Elements in array will be NaN for slices with no predictions.
         """
         mask_binary_forward, mask_logit_forward = self._propagate_single_direction(binary_segmentations)
         mask_binary_backward, mask_logit_backward = self._propagate_single_direction(binary_segmentations, reverse=True)
