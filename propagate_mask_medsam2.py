@@ -162,6 +162,8 @@ class CustomMEDSAM2():
         masks = (prob > prob_thresh).bool().cpu().numpy()
 
         output_masks = gaussian_filter(np.squeeze(np.array(masks)), sigma=(sigma_z, sigma_xy, sigma_xy))
+        # scale to preserve maximums
+        output_masks *= masks.max() / output_masks.max()
         return output_masks
 
 def combine_class_masks(indiv_class_masks_list, output_dir=None, show=True):
