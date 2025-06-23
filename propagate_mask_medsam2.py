@@ -61,10 +61,11 @@ class CustomMEDSAM2():
         keyframe_indices = np.where(not_all_nan)[0]
         return keyframe_indices
 
-    def _propagate_single_direction(self, binary_segmentations, reverse=False):
+    def _propagate_single_direction(self, image_dataset_folder_path, binary_segmentations, reverse=False):
         """
         Forward or backward pass for segmentation prediction. Uses ground truth masks for keyframes, otherwise uses previous prediction.
         Inputs:
+            image_dataset_folder_path: Directory containing preprocessed images to segment.
             binary_segmentations: array containing binary segmentation mask for some frames. if no binary segmentation mask for a certain
                 frame, it will be NaN
             reverse: if True, perform backward pass
@@ -72,8 +73,6 @@ class CustomMEDSAM2():
             output_masks_binary: list of binary mask predictions (ndarray). NaN for a specific frame if no valid prediction 
             output_masks_logit: list of logits for mask predictions (ndarray). NaN for a specific frame if no valid prediction 
         """
-        IMAGE_DATASET_FOLDER_PATH = import_data_from_roboflow.get_image_dataset_folder_path()
-
         # get valid segmentation indices
         keyframe_indices = self._get_keyframe_indices_from_sparse_segmentations(binary_segmentations)
 
@@ -85,13 +84,13 @@ class CustomMEDSAM2():
             # hydra_overrides_extra=hydra_overrides_extra,
             vos_optimized=  True,
         )
-        inference_state = predictor.init_state(video_path=IMAGE_DATASET_FOLDER_PATH, async_loading_frames=False)
+        inference_state = predictor.init_state(video_path=image_dataset_folder_path, async_loading_frames=False)
         mask_shape = binary_segmentations[keyframe_indices[0]].shape
 
         image_extensions = [".jpg", ".jpeg", ".JPG", ".JPEG", ".png", ".PNG", ".tif", ".tiff", ".TIF", ".TIFF"]
         n_frames =  sum(
-            1 for filename in os.listdir(IMAGE_DATASET_FOLDER_PATH)
-            if os.path.isfile(os.path.join(IMAGE_DATASET_FOLDER_PATH, filename)) and os.path.splitext(filename)[1] in image_extensions
+            1 for filename in os.listdir(image_dataset_folder_path)
+            if os.path.isfile(os.path.join(image_dataset_folder_path, filename)) and os.path.splitext(filename)[1] in image_extensions
         )
 
         output_masks_logit = [np.full(mask_shape, np.nan) for _ in n_frames]
@@ -138,10 +137,11 @@ class CustomMEDSAM2():
 
         return output_masks_binary, output_masks_logit
 
-    def propagate(self, binary_segmentations, sigma_xy=0.0, sigma_z=0.0, prob_thresh=0.5):
+    def propagate(self, image_dataset_folder_path, binary_segmentations, sigma_xy=0.0, sigma_z=0.0, prob_thresh=0.5):
         """
         This function will initialize a model from sparse segmentation and propagate the segmentation to all frames.
         Inputs:
+            image_dataset_folder_path: Directory containing preprocessed images to segment.
             binary_segmentations: array of masks, with each element corresponding to a different frame in a 3D volume. 
                 Elements in the array can either be NaN, indicating that no mask is provided for the specific frame (meaning we need to propagate to it), 
                 or a numpy array of shape (n, m), which specifies whether each pixel in the frame (with dimensions n by m) is inside (1) or outside (0) the mask (key frame).
@@ -153,8 +153,8 @@ class CustomMEDSAM2():
             output_masks: 3D numpy matrix shape (z,x,y) that for each pixel defines if it's inside (1) or outside (0) a mask. 
                 Elements in array will be NaN for slices with no predictions.
         """
-        mask_binary_forward, mask_logit_forward = self._propagate_single_direction(binary_segmentations)
-        mask_binary_backward, mask_logit_backward = self._propagate_single_direction(binary_segmentations, reverse=True)
+        mask_binary_forward, mask_logit_forward = self._propagate_single_direction(image_dataset_folder_path, binary_segmentations)
+        mask_binary_backward, mask_logit_backward = self._propagate_single_direction(image_dataset_folder_path, binary_segmentations, reverse=True)
         
         # Merge forward and backward predictions
         avg_logits = torch.tensor(np.nanmean(np.stack([mask_logit_forward, mask_logit_backward]), axis=0))
