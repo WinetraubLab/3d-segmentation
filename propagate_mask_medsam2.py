@@ -1,10 +1,12 @@
 import numpy as np
 import os
 import cv2
+import json
 import matplotlib.pyplot as plt
 from torch.nn.functional import sigmoid
 import torch
 from scipy.ndimage import gaussian_filter
+from pycocotools import mask as mask_utils
 
 from MedSAM2.sam2.build_sam import build_sam2_video_predictor
 import import_data_from_roboflow
@@ -162,14 +164,18 @@ class CustomMEDSAM2():
         masks = (prob > prob_thresh).bool().cpu().numpy()
 
         output_masks = gaussian_filter(np.squeeze(np.array(masks)), sigma=(sigma_z, sigma_xy, sigma_xy))
+        # Scale to preserve maximums
+        output_masks *= masks.max()/output_masks.max()
         return output_masks
 
-def combine_class_masks(indiv_class_masks_list, output_dir=None, show=True):
+def combine_class_masks(indiv_class_masks_list, output_dir=None, output_as_coco=True, coco_output_dir="predicted_segmentations_coco.json", show=True):
     """
     Combine multiple class masks into one RGB image per frame.
     Inputs:
-        indiv_class_masks_list: list of lists; outer = per class, inner = per frame (2D array or None)
+        indiv_class_masks_list: list of np arrays; outer = per class, inner = per frame (2D array)
         output_dir: if set, saves masks as images to here
+        output_as_coco: if True, writes segmentations to a file in COCO annotation format
+        coco_output_dir: location to write the final segmentations in COCO format
         show: if True, displays combined masks
     """
     frame_names = import_data_from_roboflow.list_all_images()
@@ -229,3 +235,62 @@ def combine_class_masks(indiv_class_masks_list, output_dir=None, show=True):
             plt.title(frame_names[frame_idx])
             plt.axis('off')
             plt.show()
+    
+    if output_as_coco:
+        with open(import_data_from_roboflow.COCO_PATH, "r") as f:
+            coco_data = json.load(f)
+        coco_categories = coco_data.get("categories", [])
+        coco_output = _convert_masks_to_coco(indiv_class_masks_list, num_frames, frame_names, h, w, coco_categories)
+        with open(coco_output_dir, "w") as f:
+            json.dump(coco_output, f, indent=4)
+
+def _convert_masks_to_coco(indiv_class_masks_list, num_frames, frame_names, image_height, image_width, coco_categories):
+    """
+    Converts a list of binary class masks into COCO annotations, using RLE encoding.
+    Inputs:
+        indiv_class_masks_list: list of np arrays; outer = per class, inner = per frame (2D array)
+        num_frames: number of images segmented
+        frame_names: list of the names of the images
+        image_height, image_width: image dimensions. should be the same for all images in this stack.
+        coco_categories: 'categories' dictionary entry from the original COCO file containing partial segmentations.
+            Contains 'id' and 'name' information for each class.
+    Returns:
+        coco_output: dictionary in COCO format containing image metadata, predicted segmentations, and categories
+    """
+    annotations = []
+    images = []
+    annotation_id = 1
+
+    for image_id in range(num_frames):
+        images.append({
+            "id": image_id,
+            "file_name": frame_names[image_id], 
+            "width": image_width,
+            "height": image_height
+        })
+
+    for class_id, masks in enumerate(indiv_class_masks_list):
+        for image_id, mask in enumerate(masks):
+            if np.any(mask):
+                rle = mask_utils.encode(np.asfortranarray(mask.astype(np.uint8)))
+                rle['counts'] = rle['counts'].decode('ascii')  # for JSON serializability
+
+                area = int(mask_utils.area(rle))
+                bbox = list(map(float, mask_utils.toBbox(rle)))
+
+                annotations.append({
+                    "id": annotation_id,
+                    "image_id": image_id,
+                    "category_id": class_id,
+                    "segmentation": rle,
+                    "area": area,
+                    "bbox": bbox,
+                    "iscrowd": 0
+                })
+                annotation_id += 1
+    coco_output = {
+        "images": images,
+        "annotations": annotations,
+        "categories": coco_categories
+    }
+    return coco_output

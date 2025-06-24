@@ -227,3 +227,7 @@ def get_image(image_name):
 def get_image_dataset_folder_path():
     global IMAGE_DATASET_FOLDER_PATH
     return IMAGE_DATASET_FOLDER_PATH
+
+def get_coco_path():
+    global COCO_PATH
+    return COCO_PATH
