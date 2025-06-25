@@ -15,7 +15,7 @@ class Test3dSegmentation(unittest.TestCase):
         self.project_name = "vol1_2"
         self.api_key = "" # Set when testing test_init_roboflow()
         self.MODEL_CONFIG = "configs/sam2.1_hiera_t512.yaml"
-        self.MODEL_CHECKPOINT = "checkpoints/MedSAM2_latest.pt"
+        self.MODEL_CHECKPOINT = "MedSAM2/checkpoints/MedSAM2_latest.pt"
 
     def set_up_global_vars(self):
         import_data_from_roboflow.init_from_folder("test_vectors/sample_annotations_folder/")
@@ -108,3 +108,10 @@ class Test3dSegmentation(unittest.TestCase):
         output_masks1 = self.model.propagate(self.image_dataset_folder_path, self.seg_vol_1)
         output_dir = "test_vectors/output_combined_masks/"
         propagate_mask_medsam2.combine_class_masks([output_masks0, output_masks1], output_dir=output_dir, show=True)
+
+    def test_output_coco(self):
+        self.set_up_model()
+        self.set_up_global_vars()
+        fused_masks1 = self.model.propagate(self.image_dataset_folder_path, self.seg_vol_1)
+        coco = propagate_mask_medsam2.combine_class_masks([fused_masks1], output_dir=None, coco_output_dir="predicted_segmentations_coco.json", show=False)
+        

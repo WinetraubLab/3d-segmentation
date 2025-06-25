@@ -95,8 +95,8 @@ class CustomMEDSAM2():
             if os.path.isfile(os.path.join(image_dataset_folder_path, filename)) and os.path.splitext(filename)[1] in image_extensions
         )
 
-        output_masks_logit = [np.full(mask_shape, np.nan) for _ in n_frames]
-        output_masks_binary = [np.full(mask_shape, np.nan) for _ in n_frames]
+        output_masks_logit = [np.full(mask_shape, np.nan) for _ in range(n_frames)]
+        output_masks_binary = [np.full(mask_shape, np.nan) for _ in range(n_frames)]
         first_keyframe_idx = keyframe_indices[-1] if reverse else keyframe_indices[0]
 
         # range of valid indices to propagate segmentations through
@@ -161,12 +161,12 @@ class CustomMEDSAM2():
         # Merge forward and backward predictions
         avg_logits = torch.tensor(np.nanmean(np.stack([mask_logit_forward, mask_logit_backward]), axis=0))
         prob = torch.sigmoid(avg_logits)
-        masks = (prob > prob_thresh).bool().cpu().numpy()
 
-        output_masks = gaussian_filter(np.squeeze(np.array(masks)), sigma=(sigma_z, sigma_xy, sigma_xy))
+        smoothed_probs = gaussian_filter(np.squeeze(np.array(prob)), sigma=(sigma_z, sigma_xy, sigma_xy))
         # Scale to preserve maximums
-        output_masks *= masks.max()/output_masks.max()
-        return output_masks
+        smoothed_probs *= prob.max().item()/smoothed_probs.max()
+        masks = (smoothed_probs > prob_thresh).astype(bool)
+        return masks
 
 def combine_class_masks(indiv_class_masks_list, output_dir=None, output_as_coco=True, coco_output_dir="predicted_segmentations_coco.json", show=True):
     """
@@ -182,6 +182,9 @@ def combine_class_masks(indiv_class_masks_list, output_dir=None, output_as_coco=
     num_classes = len(indiv_class_masks_list)
     num_frames = len(frame_names)
 
+    print("ALL CLASS MASKs:")
+    print(indiv_class_masks_list)
+
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
 
@@ -192,7 +195,9 @@ def combine_class_masks(indiv_class_masks_list, output_dir=None, output_as_coco=
         # Gather all masks for this frame
         for class_idx in range(num_classes):
             class_masks = indiv_class_masks_list[class_idx]
-            mask = class_masks[frame_idx] if frame_idx < len(class_masks) else None
+            print("CLASS MASK:")
+            print(class_masks)
+            mask = class_masks[frame_idx] if frame_idx < class_masks.shape[0] else None
 
             if mask is not None:
                 mask = np.array(mask).squeeze()
@@ -243,6 +248,7 @@ def combine_class_masks(indiv_class_masks_list, output_dir=None, output_as_coco=
         coco_output = _convert_masks_to_coco(indiv_class_masks_list, num_frames, frame_names, h, w, coco_categories)
         with open(coco_output_dir, "w") as f:
             json.dump(coco_output, f, indent=4)
+    return coco_output
 
 def _convert_masks_to_coco(indiv_class_masks_list, num_frames, frame_names, image_height, image_width, coco_categories):
     """
