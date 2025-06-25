@@ -3,7 +3,9 @@ import numpy.testing as npt
 import unittest
 import import_data_from_roboflow
 import propagate_mask_medsam2
-import cv2
+import json
+import matplotlib.pyplot as plt
+from collections import defaultdict
 
 class Test3dSegmentation(unittest.TestCase):
 
@@ -113,5 +115,5 @@ class Test3dSegmentation(unittest.TestCase):
         self.set_up_model()
         self.set_up_global_vars()
         fused_masks1 = self.model.propagate(self.image_dataset_folder_path, self.seg_vol_1)
-        coco = propagate_mask_medsam2.combine_class_masks([fused_masks1], output_dir=None, coco_output_dir="predicted_segmentations_coco.json", show=False)
-        
+        coco = propagate_mask_medsam2.combine_class_masks([fused_masks1], output_dir=None, coco_output_dir="test_vectors/predicted_segmentations_coco.json", show=False)
+        propagate_mask_medsam2.coco_to_tiff("test_vectors/predicted_segmentations_coco.json", "test_vectors/output_volume.tiff")

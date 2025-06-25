@@ -1,12 +1,18 @@
 import numpy as np
 import os
 import cv2
+from PIL import Image
+import tifffile
+
 import json
 import matplotlib.pyplot as plt
 from torch.nn.functional import sigmoid
 import torch
 from scipy.ndimage import gaussian_filter
 from pycocotools import mask as mask_utils
+from collections import defaultdict
+from pycocotools import mask as maskUtils
+import matplotlib.cm as cm
 
 from MedSAM2.sam2.build_sam import build_sam2_video_predictor
 import import_data_from_roboflow
@@ -182,9 +188,6 @@ def combine_class_masks(indiv_class_masks_list, output_dir=None, output_as_coco=
     num_classes = len(indiv_class_masks_list)
     num_frames = len(frame_names)
 
-    print("ALL CLASS MASKs:")
-    print(indiv_class_masks_list)
-
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
 
@@ -195,8 +198,6 @@ def combine_class_masks(indiv_class_masks_list, output_dir=None, output_as_coco=
         # Gather all masks for this frame
         for class_idx in range(num_classes):
             class_masks = indiv_class_masks_list[class_idx]
-            print("CLASS MASK:")
-            print(class_masks)
             mask = class_masks[frame_idx] if frame_idx < class_masks.shape[0] else None
 
             if mask is not None:
@@ -300,3 +301,66 @@ def _convert_masks_to_coco(indiv_class_masks_list, num_frames, frame_names, imag
         "categories": coco_categories
     }
     return coco_output
+
+def coco_to_tiff(coco_segmentations_path, tiff_output_path, colormap='Set3'):
+    """
+    Inputs:
+        coco_segmentations_path: path to the COCO annotations file containing the propagated segmentations for all images.
+        tiff_output_path: path and name of tiff file to save the output multi page tiff.
+    """
+    with open(coco_segmentations_path, "r") as f:
+        coco = json.load(f)
+
+    # Group annotations by image_id
+    annotations_by_image = defaultdict(list)
+    for ann in coco['annotations']:
+        annotations_by_image[ann['image_id']].append(ann)
+
+    # initialize volume
+    sorted_image_ids = sorted(annotations_by_image.keys())
+    first_ann = annotations_by_image[sorted_image_ids[0]][0]
+    height, width = first_ann['segmentation']['size']
+    mask_volume = np.zeros((len(sorted_image_ids), height, width, 3), dtype=np.uint8)
+
+    # set up colormap
+    category_ids = sorted({ann['category_id'] for ann in coco['annotations']})
+    cat_id_to_index = {cat_id: idx for idx, cat_id in enumerate(category_ids)}
+
+    # Get colormap 
+    cmap = cm.get_cmap(colormap, len(category_ids))
+    color_list = (cmap(np.arange(len(category_ids)))[:, :3] * 255).astype(np.uint8)  # RGB
+
+    # Visualize each image's mask
+    for i, (image_id, anns) in enumerate(annotations_by_image.items()):
+        mask_total = np.zeros((height,width,3), dtype=np.uint8)
+
+        for ann in anns:
+            seg = ann['segmentation']
+            cat_id = ann['category_id']
+            color = color_list[cat_id_to_index[cat_id]]
+
+            # If counts is string, convert to bytes
+            if isinstance(seg['counts'], str):
+                seg['counts'] = seg['counts'].encode('utf-8')
+
+            decoded_mask = maskUtils.decode(seg)
+
+            # multi channel masks
+            if decoded_mask.ndim == 3:
+                mask = np.any(decoded_mask, axis=2)
+            else:
+                mask = decoded_mask
+
+            for c in range(3):  # RGB 
+                mask_total[:, :, c][mask == 1] = color[c]
+                        
+        mask_volume[i] = mask_total
+
+    # Save to multi page tiff
+    tifffile.imwrite(
+        tiff_output_path,
+        mask_volume,
+        bigtiff=True,
+        photometric='rgb',
+        compression='deflate' # Lossless
+    )
