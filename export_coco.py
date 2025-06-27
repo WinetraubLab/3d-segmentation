@@ -5,6 +5,28 @@ from collections import defaultdict
 import tifffile
 import json
 import numpy as np
+import import_data_from_roboflow
+
+def save_segmentations_as_coco(indiv_class_masks_list, coco_output_dir="predicted_segmentations_coco.json"):
+    """
+    Inputs:
+        indiv_class_masks_list: list of np arrays; outer = per class, inner = per frame (2D array)
+        coco_output_dir: location to write the final segmentations in COCO format
+    Returns:
+        coco_output: Segmentation masks for each image, in COCO format
+    """
+    frame_names = import_data_from_roboflow.list_all_images()
+    num_frames = len(frame_names)
+
+    h,w = indiv_class_masks_list[0][0].shape
+
+    with open(import_data_from_roboflow.COCO_PATH, "r") as f:
+        coco_data = json.load(f)
+    coco_categories = coco_data.get("categories", [])
+    coco_output = convert_masks_to_coco(indiv_class_masks_list, num_frames, frame_names, h, w, coco_categories)
+    with open(coco_output_dir, "w") as f:
+        json.dump(coco_output, f, indent=4)
+    return coco_output
 
 def convert_masks_to_coco(indiv_class_masks_list, num_frames, frame_names, image_height, image_width, coco_categories):
     """

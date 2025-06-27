@@ -107,9 +107,9 @@ class Test3dSegmentation(unittest.TestCase):
         output_dir = "test_vectors/output_combined_masks/"
         propagate_mask_medsam2.combine_class_masks([output_masks0, output_masks1], output_dir=output_dir, show=True)
 
-    def test_output_coco(self):
+    def test_output_coco_tiff(self):
         self.set_up_model()
         self.set_up_global_vars()
         fused_masks1 = self.model.propagate(self.image_dataset_folder_path, self.seg_vol_1)
-        coco = propagate_mask_medsam2.combine_class_masks([fused_masks1], output_dir=None, coco_output_dir="test_vectors/predicted_segmentations_coco.json", show=False)
+        export_coco.save_segmentations_as_coco([fused_masks1], "test_vectors/predicted_segmentations_coco.json")
         export_coco.coco_to_tiff("test_vectors/predicted_segmentations_coco.json", "test_vectors/output_volume.tiff")

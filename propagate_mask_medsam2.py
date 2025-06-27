@@ -2,15 +2,12 @@ import numpy as np
 import os
 import cv2
 
-import json
 import matplotlib.pyplot as plt
-from torch.nn.functional import sigmoid
 import torch
 from scipy.ndimage import gaussian_filter
 
 from MedSAM2.sam2.build_sam import build_sam2_video_predictor
 import import_data_from_roboflow
-import export_coco
 
 class CustomMEDSAM2():
     def __init__(self, config_filepath, checkpoint_filepath):
@@ -169,14 +166,12 @@ class CustomMEDSAM2():
         masks = (smoothed_probs > prob_thresh).astype(bool)
         return masks
 
-def combine_class_masks(indiv_class_masks_list, output_dir=None, output_as_coco=True, coco_output_dir="predicted_segmentations_coco.json", show=True):
+def combine_class_masks(indiv_class_masks_list, output_dir=None, show=True):
     """
     Combine multiple class masks into one RGB image per frame.
     Inputs:
         indiv_class_masks_list: list of np arrays; outer = per class, inner = per frame (2D array)
         output_dir: if set, saves masks as images to here
-        output_as_coco: if True, writes segmentations to a file in COCO annotation format
-        coco_output_dir: location to write the final segmentations in COCO format
         show: if True, displays combined masks
     """
     frame_names = import_data_from_roboflow.list_all_images()
@@ -236,12 +231,3 @@ def combine_class_masks(indiv_class_masks_list, output_dir=None, output_as_coco=
             plt.title(frame_names[frame_idx])
             plt.axis('off')
             plt.show()
-    
-    if output_as_coco:
-        with open(import_data_from_roboflow.COCO_PATH, "r") as f:
-            coco_data = json.load(f)
-        coco_categories = coco_data.get("categories", [])
-        coco_output = export_coco.convert_masks_to_coco(indiv_class_masks_list, num_frames, frame_names, h, w, coco_categories)
-        with open(coco_output_dir, "w") as f:
-            json.dump(coco_output, f, indent=4)
-    return coco_output
