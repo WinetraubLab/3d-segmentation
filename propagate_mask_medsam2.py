@@ -1,8 +1,8 @@
 import numpy as np
 import os
 import cv2
+
 import matplotlib.pyplot as plt
-from torch.nn.functional import sigmoid
 import torch
 from scipy.ndimage import gaussian_filter
 
@@ -93,8 +93,8 @@ class CustomMEDSAM2():
             if os.path.isfile(os.path.join(image_dataset_folder_path, filename)) and os.path.splitext(filename)[1] in image_extensions
         )
 
-        output_masks_logit = [np.full(mask_shape, np.nan) for _ in n_frames]
-        output_masks_binary = [np.full(mask_shape, np.nan) for _ in n_frames]
+        output_masks_logit = [np.full(mask_shape, np.nan) for _ in range(n_frames)]
+        output_masks_binary = [np.full(mask_shape, np.nan) for _ in range(n_frames)]
         first_keyframe_idx = keyframe_indices[-1] if reverse else keyframe_indices[0]
 
         # range of valid indices to propagate segmentations through
@@ -159,16 +159,18 @@ class CustomMEDSAM2():
         # Merge forward and backward predictions
         avg_logits = torch.tensor(np.nanmean(np.stack([mask_logit_forward, mask_logit_backward]), axis=0))
         prob = torch.sigmoid(avg_logits)
-        masks = (prob > prob_thresh).bool().cpu().numpy()
 
-        output_masks = gaussian_filter(np.squeeze(np.array(masks)), sigma=(sigma_z, sigma_xy, sigma_xy))
-        return output_masks
+        smoothed_probs = gaussian_filter(np.squeeze(np.array(prob)), sigma=(sigma_z, sigma_xy, sigma_xy))
+        # Scale to preserve maximums
+        smoothed_probs *= prob.max().item()/smoothed_probs.max()
+        masks = (smoothed_probs > prob_thresh).astype(bool)
+        return masks
 
 def combine_class_masks(indiv_class_masks_list, output_dir=None, show=True):
     """
     Combine multiple class masks into one RGB image per frame.
     Inputs:
-        indiv_class_masks_list: list of lists; outer = per class, inner = per frame (2D array or None)
+        indiv_class_masks_list: list of np arrays; outer = per class, inner = per frame (2D array)
         output_dir: if set, saves masks as images to here
         show: if True, displays combined masks
     """
@@ -186,7 +188,7 @@ def combine_class_masks(indiv_class_masks_list, output_dir=None, show=True):
         # Gather all masks for this frame
         for class_idx in range(num_classes):
             class_masks = indiv_class_masks_list[class_idx]
-            mask = class_masks[frame_idx] if frame_idx < len(class_masks) else None
+            mask = class_masks[frame_idx] if frame_idx < class_masks.shape[0] else None
 
             if mask is not None:
                 mask = np.array(mask).squeeze()

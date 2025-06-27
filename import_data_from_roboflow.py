@@ -42,12 +42,11 @@ def init_from_roboflow(workspace_name, project_name, api_key):
 
 def init_from_folder(folder_path):
     """
-    Initialize from a folder containing COCO-style annotations.
+    Initialize from a folder containing COCO-style annotations. Sets global COCO_PATH: path to COCO annotation file.
 
     Inputs:
         folder_path: path to folder containing COCO-style annotation.
     Returns:
-        COCO_PATH: path to annotations file
         class_ids: a list of integers representing each unique class in the dataset segmentations
     """
     global COCO_PATH
@@ -69,11 +68,7 @@ def list_all_labels():
 
     # Get all class ids from segmentation annotations
     class_ids = {ann['category_id'] for ann in coco['annotations']}
-
-    # Count unique classes
     num_classes = len(class_ids)
-    # print(f"Total number of unique classes: {num_classes}")
-
     return class_ids
 
 def list_all_images():
@@ -227,3 +222,7 @@ def get_image(image_name):
 def get_image_dataset_folder_path():
     global IMAGE_DATASET_FOLDER_PATH
     return IMAGE_DATASET_FOLDER_PATH
+
+def get_coco_path():
+    global COCO_PATH
+    return COCO_PATH

@@ -1,9 +1,7 @@
 import numpy as np
 import numpy.testing as npt
 import unittest
-import import_data_from_roboflow
-import propagate_mask_medsam2
-import cv2
+import import_data_from_roboflow, propagate_mask_medsam2, export_coco
 
 class Test3dSegmentation(unittest.TestCase):
 
@@ -15,7 +13,7 @@ class Test3dSegmentation(unittest.TestCase):
         self.project_name = "vol1_2"
         self.api_key = "" # Set when testing test_init_roboflow()
         self.MODEL_CONFIG = "configs/sam2.1_hiera_t512.yaml"
-        self.MODEL_CHECKPOINT = "checkpoints/MedSAM2_latest.pt"
+        self.MODEL_CHECKPOINT = "MedSAM2/checkpoints/MedSAM2_latest.pt"
 
     def set_up_global_vars(self):
         import_data_from_roboflow.init_from_folder("test_vectors/sample_annotations_folder/")
@@ -108,3 +106,10 @@ class Test3dSegmentation(unittest.TestCase):
         output_masks1 = self.model.propagate(self.image_dataset_folder_path, self.seg_vol_1)
         output_dir = "test_vectors/output_combined_masks/"
         propagate_mask_medsam2.combine_class_masks([output_masks0, output_masks1], output_dir=output_dir, show=True)
+
+    def test_output_coco_tiff(self):
+        self.set_up_model()
+        self.set_up_global_vars()
+        fused_masks1 = self.model.propagate(self.image_dataset_folder_path, self.seg_vol_1)
+        export_coco.save_segmentations_as_coco([fused_masks1], "test_vectors/predicted_segmentations_coco.json")
+        export_coco.coco_to_tiff("test_vectors/predicted_segmentations_coco.json", "test_vectors/output_volume.tiff")
