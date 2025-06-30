@@ -1,6 +1,7 @@
 import numpy as np
 import os
 import cv2
+import tifffile
 
 import matplotlib.pyplot as plt
 import torch
@@ -233,7 +234,7 @@ def combine_class_masks(indiv_class_masks_list, output_dir=None, show=True):
             plt.axis('off')
             plt.show()
 
-def generate_distance_heatmap(mask_volume, distance_threshold_px, overlay=True, show=False):
+def generate_distance_heatmap(mask_volume, distance_threshold_px, overlay=True, show=False, output_path=None):
     """
     Create a 3D volume with pixels where pixels at least distance_threshold_px from the object instance represented in masks
     are colored.
@@ -243,7 +244,7 @@ def generate_distance_heatmap(mask_volume, distance_threshold_px, overlay=True, 
         overlay: If True, returns a 3D volume where distant pixels are overlaid on the original masks.
                  If False, returns only the distance-based mask (highlighted pixels).
     Outputs:
-        : a 3D volume where pixels meeting the distance condition are marked. If `overlay` is True, original object pixels are preserved.
+        A 3D volume where pixels meeting the distance condition are marked. If `overlay` is True, original object pixels are preserved.
     """
     # rgb replace the 1's in binary mask_volume with a dark red color.
     # do the distance thresholding. make the pixels sky blue. make it gradient toward light blue the farther away pixels are.
@@ -251,9 +252,9 @@ def generate_distance_heatmap(mask_volume, distance_threshold_px, overlay=True, 
     output = np.zeros((frames, h, w, 3), dtype=np.uint8)
 
     # Store colors
-    dark_red = np.array([170, 0, 0], dtype=np.uint8) 
-    sky_blue = np.array([119, 198, 230], dtype=np.float32)  
-    light_blue = np.array([203, 233, 245], dtype=np.float32) 
+    red = np.array([255, 0, 0], dtype=np.uint8) 
+    sky_blue = np.array([66, 175, 219], dtype=np.float32)  
+    light_blue = np.array([217, 243, 255], dtype=np.float32) 
 
     for i in range(frames):
         mask = mask_volume[i]
@@ -270,7 +271,7 @@ def generate_distance_heatmap(mask_volume, distance_threshold_px, overlay=True, 
         for y in range(h):
             for x in range(w):
                 if overlay and mask[y, x] == 1:
-                    output[i, y, x] = dark_red
+                    output[i, y, x] = red
                 elif distance_map[y, x] >= distance_threshold_px:
                     # Blend blues
                     blend_ratio = normalized_distance[y, x]
@@ -282,6 +283,15 @@ def generate_distance_heatmap(mask_volume, distance_threshold_px, overlay=True, 
             plt.imshow(output[i])
             plt.axis('off')
             plt.show()
+
+        if output_path:
+            tifffile.imwrite(
+                output_path,
+                mask_volume,
+                bigtiff=True,
+                photometric='rgb',
+                compression='deflate' # Lossless
+            )
 
     output = output.astype(np.uint8)
     return output
