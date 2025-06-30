@@ -256,42 +256,44 @@ def generate_distance_heatmap(mask_volume, distance_threshold_px, overlay=True, 
     sky_blue = np.array([66, 175, 219], dtype=np.float32)  
     light_blue = np.array([217, 243, 255], dtype=np.float32) 
 
-    for i in range(frames):
-        mask = mask_volume[i]
-        inverted_mask = np.invert(mask)
-        # Distance transform: replaces each nonzero element with its shortest dist to zero-valued elements
-        distance_map = distance_transform_edt(inverted_mask) 
+    inverted_mask_vol = np.invert(mask_volume)
+    # Distance transform: replaces each nonzero element with its shortest dist to zero-valued elements
+    distance_vol = distance_transform_edt(inverted_mask_vol)
 
-        # Normalize distances
-        max_distance = distance_map.max() 
-        if max_distance == 0:
-            max_distance = 1
-        normalized_distance = distance_map / max_distance
+    # Normalize distances
+    max_distance = distance_vol.max() 
+    if max_distance == 0:
+        max_distance = 1
+    normalized_distance_vol = distance_vol / max_distance
 
-        for y in range(h):
-            for x in range(w):
-                if overlay and mask[y, x] == 1:
-                    output[i, y, x] = red
-                elif distance_map[y, x] >= distance_threshold_px:
-                    # Blend blues
-                    blend_ratio = normalized_distance[y, x]
-                    color = sky_blue * (1 - blend_ratio) + light_blue * blend_ratio
-                    out_frame = np.clip(color, 0, 255)
-                    output[i, y, x] = out_frame
-        if show:
-            plt.figure(figsize=(5, 5))
-            plt.imshow(output[i])
-            plt.axis('off')
-            plt.show()
+    distance_mask = distance_vol >= distance_threshold_px
 
-        if output_path:
-            tifffile.imwrite(
-                output_path,
-                mask_volume,
-                bigtiff=True,
-                photometric='rgb',
-                compression='deflate' # Lossless
-            )
+    # Blend color map for pixels meeting distance threshold
+    blend_ratio = normalized_distance_vol[distance_mask][..., np.newaxis]  
+    blended_colors = sky_blue * (1 - blend_ratio) + light_blue * blend_ratio
+    blended_colors = np.clip(blended_colors, 0, 255).astype(np.uint8)
+
+    # Apply colors to output
+    output[distance_mask] = blended_colors
+
+    # Overlay red where objects exist
+    if overlay:
+        output[mask_volume == 1] = red
+
+    if show:
+        plt.figure(figsize=(5, 5))
+        plt.imshow(output[i])
+        plt.axis('off')
+        plt.show()
+
+    if output_path:
+        tifffile.imwrite(
+            output_path,
+            mask_volume,
+            bigtiff=True,
+            photometric='rgb',
+            compression='deflate' # Lossless
+        )
 
     output = output.astype(np.uint8)
     return output
