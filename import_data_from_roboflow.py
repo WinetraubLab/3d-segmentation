@@ -36,7 +36,7 @@ def init_from_roboflow(workspace_name, project_name, api_key):
             if file.endswith('.coco.json'):
                 COCO_PATH = (os.path.join(root, file))
 
-    class_ids = list_all_labels(COCO_PATH)
+    class_ids = list_all_labels()
 
     return class_ids
 
