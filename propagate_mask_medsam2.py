@@ -119,7 +119,7 @@ class CustomMEDSAM2():
                 predicted_logits = (gt_mask * 20.0) - 10.0  # large positive where mask=1, large neg where mask=0
             else:
                 # otherwise, predict current mask using previous frame
-                prev_idx = process_range[i-1]
+                prev_idx = i-1
                 if prev_idx < 0 or prev_idx >= n_frames or output_masks_binary[prev_idx] is None:
                     predicted_mask = np.full(mask_shape, np.nan)
                     predicted_logits = np.full(mask_shape, np.nan)
