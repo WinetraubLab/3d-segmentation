@@ -253,28 +253,21 @@ def generate_distance_heatmap(mask_volume, distance_threshold_px, overlay=True, 
 
     # Store colors
     red = np.array([255, 0, 0], dtype=np.uint8) 
-    sky_blue = np.array([66, 175, 219], dtype=np.float32)  
-    light_blue = np.array([217, 243, 255], dtype=np.float32) 
+    sky_blue = np.array([123, 201, 232], dtype=np.float32)  
 
     inverted_mask_vol = np.invert(mask_volume)
     # Distance transform: replaces each nonzero element with its shortest dist to zero-valued elements
     distance_vol = distance_transform_edt(inverted_mask_vol)
-
-    # Normalize distances
-    max_distance = distance_vol.max() 
-    if max_distance == 0:
-        max_distance = 1
-    normalized_distance_vol = distance_vol / max_distance
-
     distance_mask = distance_vol >= distance_threshold_px
 
-    # Blend color map for pixels meeting distance threshold
-    blend_ratio = normalized_distance_vol[distance_mask][..., np.newaxis]  
-    blended_colors = sky_blue * (1 - blend_ratio) + light_blue * blend_ratio
-    blended_colors = np.clip(blended_colors, 0, 255).astype(np.uint8)
-
     # Apply colors to output
-    output[distance_mask] = blended_colors
+    output[distance_mask] = sky_blue
+
+    # Remove pixels near edge
+    output[:,:distance_threshold_px, :] = np.array([0,0,0])
+    output[:,:, :distance_threshold_px] = np.array([0,0,0])
+    output[:,h-distance_threshold_px:, :] = np.array([0,0,0])
+    output[:,:, w-distance_threshold_px:] = np.array([0,0,0])
 
     # Overlay red where objects exist
     if overlay:
