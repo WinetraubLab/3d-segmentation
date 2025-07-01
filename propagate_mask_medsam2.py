@@ -281,10 +281,11 @@ def generate_distance_heatmap(mask_volume, distance_threshold_px, overlay=True, 
         output[mask_volume == 1] = red
 
     if show:
-        plt.figure(figsize=(5, 5))
-        plt.imshow(output[i])
-        plt.axis('off')
-        plt.show()
+        for mask in output:
+            plt.figure(figsize=(5, 5))
+            plt.imshow(mask)
+            plt.axis('off')
+            plt.show()
 
     if output_path:
         tifffile.imwrite(
