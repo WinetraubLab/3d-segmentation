@@ -31,6 +31,10 @@ class CustomMEDSAM2():
             if frame_idx not in inference_state["frames_already_tracked"]:
                 inference_state["frames_already_tracked"][frame_idx] = {"reverse": reverse}
 
+            if frame_idx == 0 and reverse:
+                # work around for the medsam propagation implementation
+                frame_idx = 1
+
             predictor.add_new_mask(
                 inference_state=inference_state,
                 frame_idx=frame_idx,
@@ -42,11 +46,9 @@ class CustomMEDSAM2():
         for _, out_obj_ids, out_mask_logits in predictor.propagate_in_video(inference_state, start_frame_idx=frame_idx,
             max_frame_num_to_track=1, reverse=reverse):
 
-            for i, obj_id in enumerate(out_obj_ids):
-                if obj_id == class_id:
-                    logit = out_mask_logits[i].cpu()
-                    mask = (logit > 0.0).numpy()
-                    return mask, logit
+            logit = out_mask_logits[0].cpu()
+            mask = (logit > 0.0).numpy()
+            return mask, logit
 
         return None, None 
     
@@ -119,7 +121,10 @@ class CustomMEDSAM2():
                 predicted_logits = (gt_mask * 20.0) - 10.0  # large positive where mask=1, large neg where mask=0
             else:
                 # otherwise, predict current mask using previous frame
-                prev_idx = i-1
+                if reverse:
+                    prev_idx = i+1
+                else:
+                    prev_idx = i-1
                 if prev_idx < 0 or prev_idx >= n_frames or output_masks_binary[prev_idx] is None:
                     predicted_mask = np.full(mask_shape, np.nan)
                     predicted_logits = np.full(mask_shape, np.nan)
@@ -132,8 +137,16 @@ class CustomMEDSAM2():
                     0,
                     reverse=reverse
                 )
+                if predicted_mask is None or predicted_logits is None:
+                    print(f"Warning: Prediction failed at frame {i}. Using previous mask from frame {prev_idx} as fallback.")
+
+                    # Fallback: use previous mask
+                    predicted_mask = output_masks_binary[prev_idx]
+                    predicted_logits = output_masks_logit[prev_idx]
+
                 predicted_logits = predicted_logits.cpu().numpy()
-                
+                predicted_mask = predicted_mask.astype(np.uint8)
+
             output_masks_binary[i] = np.squeeze(predicted_mask)
             output_masks_logit[i] = np.squeeze(predicted_logits)
 
@@ -160,12 +173,26 @@ class CustomMEDSAM2():
         
         # Merge forward and backward predictions
         avg_logits = torch.tensor(np.nanmean(np.stack([mask_logit_forward, mask_logit_backward]), axis=0))
-        prob = torch.sigmoid(avg_logits)
+        prob = torch.sigmoid(avg_logits).cpu().numpy()
 
-        smoothed_probs = gaussian_filter(np.squeeze(np.array(prob)), sigma=(sigma_z, sigma_xy, sigma_xy))
+        prob_np = np.squeeze(np.array(prob)) 
+        # mask of where values are valid
+        valid_mask = ~np.isnan(prob_np) 
+
+        prob_filled = np.nan_to_num(prob_np, nan=0.0)
+
+        # smooth predictions and the validity mask, ignoring NAN slices
+        smoothed_probs = gaussian_filter(prob_filled, sigma=(sigma_z, sigma_xy, sigma_xy))
+        smoothed_mask = gaussian_filter(valid_mask.astype(float), sigma=(sigma_z, sigma_xy, sigma_xy))
+
+        # avoid NaN leakage
+        with np.errstate(invalid='ignore', divide='ignore'):
+            smoothed_probs /= smoothed_mask
+
         # Scale to preserve maximums
-        smoothed_probs *= prob.max().item()/smoothed_probs.max()
-        masks = (smoothed_probs > prob_thresh).astype(bool)
+        smoothed_probs *= np.nanmax(prob) / np.nanmax(smoothed_probs)
+
+        masks = (smoothed_probs > prob_thresh).astype(np.uint8)
         return masks
 
 def combine_class_masks(indiv_class_masks_list, output_dir=None, show=True):
