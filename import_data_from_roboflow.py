@@ -102,10 +102,13 @@ def get_mask(image_name, class_id):
 
     image_id_map = {img["file_name"]: img["id"] for img in coco["images"]}
     image_info_map = {img["id"]: img for img in coco["images"]}
+    
+    def _normalize_filename(name):
+        return ''.join(c for c in name if c.isalnum()).lower()
 
     matching_file = None
     for name in image_id_map:
-        if name.startswith(file_name):
+        if _normalize_filename(name).startswith(_normalize_filename(file_name)):
             matching_file = name
             break
 
@@ -116,7 +119,7 @@ def get_mask(image_name, class_id):
     for ann in coco["annotations"]:
         annotations_per_image[ann["image_id"]].append(ann)
 
-    image_id = image_id_map[file_name]
+    image_id = image_id_map[matching_file]
     image_info = image_info_map[image_id]
     height, width = image_info["height"], image_info["width"]
 
@@ -146,30 +149,21 @@ def create_mask_volume(class_id):
     Inputs:
         class_id: coco-annotation class for which to create the segmentation mask volume.
     Returns:
-        mask_volume: array shape (z,x,y). array[z] will be NaN array if no segmentation mask is available for that frame,
-            otherwise it will be loaded from COCO annotation file.
+        mask_volume: dictionary. dict[z] will be the segmentation mask loaded from COCO annotation file.
     """
     global IMAGE_DATASET_FOLDER_PATH
-    
+
     image_files = list_all_images()
-    image_paths = [os.path.join(IMAGE_DATASET_FOLDER_PATH, f) for f in image_files]
-    
-    # Load first image to get shape
-    sample_img = cv2.imread(image_paths[0], cv2.IMREAD_GRAYSCALE)
-    x, y = sample_img.shape
-    z = len(image_paths)
-    
-    # Initialize segmentation volume with NaNs
-    mask_volume = np.full((z, x, y), np.nan, dtype=np.float32)
+    mask_dict = {}
 
     for idx, image_f in enumerate(image_files):
         try:
             mask = get_mask(image_f, class_id)
-            mask_volume[idx] = mask.astype(np.float32)
+            mask_dict[idx] = mask.astype(np.float32)
         except ValueError:
-            # Image not in annotations = leave slice as NaN
-            continue
-    return mask_volume
+            continue  # Skip if no annotation
+
+    return mask_dict
 
 def preprocess_images(original_images_path, preprocessed_images_path):
     """

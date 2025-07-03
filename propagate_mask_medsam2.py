@@ -55,14 +55,12 @@ class CustomMEDSAM2():
     def _get_keyframe_indices_from_sparse_segmentations(self, binary_segmentations):
         """
         Inputs:
-            binary_segmentations: array containing binary segmentation mask for some frames. if no binary segmentation mask for a certain
+            binary_segmentations: dict containing binary segmentation mask for some frames. if no binary segmentation mask for a certain
                 frame, it will be NaN
         Returns:
             keyframe_indices: list of indices where there is a valid seg mask
         """
-        all_nan = np.isnan(binary_segmentations).all(axis=(1, 2))
-        not_all_nan = ~all_nan
-        keyframe_indices = np.where(not_all_nan)[0]
+        keyframe_indices = list(binary_segmentations.keys())
         return keyframe_indices
 
     def _propagate_single_direction(self, image_dataset_folder_path, binary_segmentations, reverse=False):
@@ -70,8 +68,7 @@ class CustomMEDSAM2():
         Forward or backward pass for segmentation prediction. Uses ground truth masks for keyframes, otherwise uses previous prediction.
         Inputs:
             image_dataset_folder_path: Directory containing preprocessed images to segment.
-            binary_segmentations: array containing binary segmentation mask for some frames. if no binary segmentation mask for a certain
-                frame, it will be NaN
+            binary_segmentations: dict containing binary segmentation mask for some frames.
             reverse: if True, perform backward pass
         Returns:
             output_masks_binary: list of binary mask predictions (ndarray). NaN for a specific frame if no valid prediction 
@@ -157,10 +154,8 @@ class CustomMEDSAM2():
         This function will initialize a model from sparse segmentation and propagate the segmentation to all frames.
         Inputs:
             image_dataset_folder_path: Directory containing preprocessed images to segment.
-            binary_segmentations: array of masks, with each element corresponding to a different frame in a 3D volume. 
-                Elements in the array can either be NaN, indicating that no mask is provided for the specific frame (meaning we need to propagate to it), 
-                or a numpy array of shape (n, m), which specifies whether each pixel in the frame (with dimensions n by m) is inside (1) or outside (0) the mask (key frame).
-                For example, binary_segmentations = [NaN, zeros(n,m), NaN, NaN, zeros(n,m)] defines key frames in frames 1 and 4.
+            binary_segmentations: dict of masks, with each element corresponding to a different frame in a 3D volume. 
+                Masks are numpy array of shape (n, m), which specifies whether each pixel in the frame (with dimensions n by m) is inside (1) or outside (0) the mask (key frame).
             sigma_xy: gaussian smoothing sigma on x and y axes
             sigma_z: gaussian smoothing sigma on z axis
             prob_thresh: probability threshold; values above this are set to 1 in the binary mask.
