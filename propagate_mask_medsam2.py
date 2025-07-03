@@ -1,10 +1,12 @@
 import numpy as np
 import os
 import cv2
+import tifffile
 
 import matplotlib.pyplot as plt
 import torch
 from scipy.ndimage import gaussian_filter
+from scipy.ndimage import distance_transform_edt
 
 from MedSAM2.sam2.build_sam import build_sam2_video_predictor
 import import_data_from_roboflow
@@ -29,6 +31,10 @@ class CustomMEDSAM2():
             if frame_idx not in inference_state["frames_already_tracked"]:
                 inference_state["frames_already_tracked"][frame_idx] = {"reverse": reverse}
 
+            if frame_idx == 0 and reverse:
+                # work around for the medsam propagation implementation
+                frame_idx = 1
+
             predictor.add_new_mask(
                 inference_state=inference_state,
                 frame_idx=frame_idx,
@@ -40,25 +46,21 @@ class CustomMEDSAM2():
         for _, out_obj_ids, out_mask_logits in predictor.propagate_in_video(inference_state, start_frame_idx=frame_idx,
             max_frame_num_to_track=1, reverse=reverse):
 
-            for i, obj_id in enumerate(out_obj_ids):
-                if obj_id == class_id:
-                    logit = out_mask_logits[i].cpu()
-                    mask = (logit > 0.0).numpy()
-                    return mask, logit
+            logit = out_mask_logits[0].cpu()
+            mask = (logit > 0.0).numpy()
+            return mask, logit
 
         return None, None 
     
     def _get_keyframe_indices_from_sparse_segmentations(self, binary_segmentations):
         """
         Inputs:
-            binary_segmentations: array containing binary segmentation mask for some frames. if no binary segmentation mask for a certain
+            binary_segmentations: dict containing binary segmentation mask for some frames. if no binary segmentation mask for a certain
                 frame, it will be NaN
         Returns:
             keyframe_indices: list of indices where there is a valid seg mask
         """
-        all_nan = np.isnan(binary_segmentations).all(axis=(1, 2))
-        not_all_nan = ~all_nan
-        keyframe_indices = np.where(not_all_nan)[0]
+        keyframe_indices = list(binary_segmentations.keys())
         return keyframe_indices
 
     def _propagate_single_direction(self, image_dataset_folder_path, binary_segmentations, reverse=False):
@@ -66,8 +68,7 @@ class CustomMEDSAM2():
         Forward or backward pass for segmentation prediction. Uses ground truth masks for keyframes, otherwise uses previous prediction.
         Inputs:
             image_dataset_folder_path: Directory containing preprocessed images to segment.
-            binary_segmentations: array containing binary segmentation mask for some frames. if no binary segmentation mask for a certain
-                frame, it will be NaN
+            binary_segmentations: dict containing binary segmentation mask for some frames.
             reverse: if True, perform backward pass
         Returns:
             output_masks_binary: list of binary mask predictions (ndarray). NaN for a specific frame if no valid prediction 
@@ -117,7 +118,10 @@ class CustomMEDSAM2():
                 predicted_logits = (gt_mask * 20.0) - 10.0  # large positive where mask=1, large neg where mask=0
             else:
                 # otherwise, predict current mask using previous frame
-                prev_idx = process_range[i-1]
+                if reverse:
+                    prev_idx = i+1
+                else:
+                    prev_idx = i-1
                 if prev_idx < 0 or prev_idx >= n_frames or output_masks_binary[prev_idx] is None:
                     predicted_mask = np.full(mask_shape, np.nan)
                     predicted_logits = np.full(mask_shape, np.nan)
@@ -130,8 +134,16 @@ class CustomMEDSAM2():
                     0,
                     reverse=reverse
                 )
+                if predicted_mask is None or predicted_logits is None:
+                    print(f"Warning: Prediction failed at frame {i}. Using previous mask from frame {prev_idx} as fallback.")
+
+                    # Fallback: use previous mask
+                    predicted_mask = output_masks_binary[prev_idx]
+                    predicted_logits = output_masks_logit[prev_idx]
+
                 predicted_logits = predicted_logits.cpu().numpy()
-                
+                predicted_mask = predicted_mask.astype(np.uint8)
+
             output_masks_binary[i] = np.squeeze(predicted_mask)
             output_masks_logit[i] = np.squeeze(predicted_logits)
 
@@ -142,10 +154,8 @@ class CustomMEDSAM2():
         This function will initialize a model from sparse segmentation and propagate the segmentation to all frames.
         Inputs:
             image_dataset_folder_path: Directory containing preprocessed images to segment.
-            binary_segmentations: array of masks, with each element corresponding to a different frame in a 3D volume. 
-                Elements in the array can either be NaN, indicating that no mask is provided for the specific frame (meaning we need to propagate to it), 
-                or a numpy array of shape (n, m), which specifies whether each pixel in the frame (with dimensions n by m) is inside (1) or outside (0) the mask (key frame).
-                For example, binary_segmentations = [NaN, zeros(n,m), NaN, NaN, zeros(n,m)] defines key frames in frames 1 and 4.
+            binary_segmentations: dict of masks, with each element corresponding to a different frame in a 3D volume. 
+                Masks are numpy array of shape (n, m), which specifies whether each pixel in the frame (with dimensions n by m) is inside (1) or outside (0) the mask (key frame).
             sigma_xy: gaussian smoothing sigma on x and y axes
             sigma_z: gaussian smoothing sigma on z axis
             prob_thresh: probability threshold; values above this are set to 1 in the binary mask.
@@ -158,12 +168,26 @@ class CustomMEDSAM2():
         
         # Merge forward and backward predictions
         avg_logits = torch.tensor(np.nanmean(np.stack([mask_logit_forward, mask_logit_backward]), axis=0))
-        prob = torch.sigmoid(avg_logits)
+        prob = torch.sigmoid(avg_logits).cpu().numpy()
 
-        smoothed_probs = gaussian_filter(np.squeeze(np.array(prob)), sigma=(sigma_z, sigma_xy, sigma_xy))
+        prob_np = np.squeeze(np.array(prob)) 
+        # mask of where values are valid
+        valid_mask = ~np.isnan(prob_np) 
+
+        prob_filled = np.nan_to_num(prob_np, nan=0.0)
+
+        # smooth predictions and the validity mask, ignoring NAN slices
+        smoothed_probs = gaussian_filter(prob_filled, sigma=(sigma_z, sigma_xy, sigma_xy))
+        smoothed_mask = gaussian_filter(valid_mask.astype(float), sigma=(sigma_z, sigma_xy, sigma_xy))
+
+        # avoid NaN leakage
+        with np.errstate(invalid='ignore', divide='ignore'):
+            smoothed_probs /= smoothed_mask
+
         # Scale to preserve maximums
-        smoothed_probs *= prob.max().item()/smoothed_probs.max()
-        masks = (smoothed_probs > prob_thresh).astype(bool)
+        smoothed_probs *= np.nanmax(prob) / np.nanmax(smoothed_probs)
+
+        masks = (smoothed_probs > prob_thresh).astype(np.uint8)
         return masks
 
 def combine_class_masks(indiv_class_masks_list, output_dir=None, show=True):
@@ -231,3 +255,74 @@ def combine_class_masks(indiv_class_masks_list, output_dir=None, show=True):
             plt.title(frame_names[frame_idx])
             plt.axis('off')
             plt.show()
+
+def generate_distance_heatmap(mask_volume, distance_threshold_px_near=np.nan, distance_threshold_px_far=np.nan, near_color_rgb=(163, 222, 153), far_color_rgb=(205, 164, 224), overlay=True, show=False, output_path=None, use_2d_xy_distances=False):
+    """
+    Create a 3D volume with pixels where pixels at least distance_threshold_px from the object instance represented in masks
+    are colored.
+    Inputs:
+        mask_volume: np array of binary segmentation masks per frame.
+        distance_threshold_px_near: Distance threshold in pixels. Pixels less than this distance from the object will be highlighted.
+        distance_threshold_px_far: Distance threshold in pixels. Pixels more than this distance from the object will be highlighted.
+        overlay: If True, returns a 3D volume where distant pixels are overlaid on the original masks.
+                 If False, returns only the distance-based mask (highlighted pixels).
+        show: if True, shows each slice.
+        use_2d_xy_distances: if True, calculates distances in 2D within each slice only, not 3D across the volume.
+    Outputs:
+        A 3D volume where pixels meeting the distance condition are marked. If `overlay` is True, original object pixels are preserved.
+    """
+    # rgb replace the 1's in binary mask_volume with a dark red color.
+    # do the distance thresholding. make the pixels sky blue. make it gradient toward light blue the farther away pixels are.
+    frames, h, w = mask_volume.shape
+    output = np.zeros((frames, h, w, 3), dtype=np.uint8)
+
+    # Store colors
+    red = np.array([255, 0, 0], dtype=np.uint8) 
+
+    inverted_mask_vol = np.logical_not(mask_volume).astype(np.uint8)
+    # Distance transform: replaces each nonzero element with its shortest dist to zero-valued elements
+    if use_2d_xy_distances:
+        # Compute distance per frame (XY only)
+        distance_vol = np.zeros_like(mask_volume, dtype=np.float32)
+        for i in range(mask_volume.shape[0]):
+            distance_vol[i] = distance_transform_edt(inverted_mask_vol[i])
+    else:
+        # Use 3D distances
+        distance_vol = distance_transform_edt(inverted_mask_vol)
+        
+    distance_mask_near = distance_vol <= distance_threshold_px_near
+    distance_mask_far = distance_vol >= distance_threshold_px_far
+
+    # Apply colors to output
+    output[distance_mask_far] = far_color_rgb
+
+    # Remove pixels near edge
+    output[:,:distance_threshold_px_far, :] = np.array([0,0,0])
+    output[:,:, :distance_threshold_px_far] = np.array([0,0,0])
+    output[:,h-distance_threshold_px_far:, :] = np.array([0,0,0])
+    output[:,:, w-distance_threshold_px_far:] = np.array([0,0,0])
+
+    output[distance_mask_near] = near_color_rgb
+
+    # Overlay red where objects exist
+    if overlay:
+        output[mask_volume == 1] = red
+
+    if show:
+        for mask in output:
+            plt.figure(figsize=(5, 5))
+            plt.imshow(mask)
+            plt.axis('off')
+            plt.show()
+
+    if output_path:
+        tifffile.imwrite(
+            output_path,
+            output,
+            bigtiff=True,
+            photometric='rgb',
+            compression='deflate' # Lossless
+        )
+
+    output = output.astype(np.uint8)
+    return output
