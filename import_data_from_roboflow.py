@@ -144,7 +144,7 @@ def get_mask(image_name, class_id):
 
     return mask
 
-def create_mask_volume(class_id):
+def create_mask_volume(class_id, downsample_hw_size=None):
     """
     Inputs:
         class_id: coco-annotation class for which to create the segmentation mask volume.
@@ -158,19 +158,23 @@ def create_mask_volume(class_id):
 
     for idx, image_f in enumerate(image_files):
         try:
-            mask = get_mask(image_f, class_id)
-            mask_dict[idx] = mask.astype(np.float32)
+            mask = get_mask(image_f, class_id).astype(np.float32)
+            if downsample_hw_size:
+                assert len(downsample_hw_size) == 2
+                mask = cv2.resize(mask, downsample_hw_size, interpolation=cv2.INTER_NEAREST) # nearest neighbor for masks
+            mask_dict[idx] = mask
         except ValueError:
             continue  # Skip if no annotation
 
     return mask_dict
 
-def preprocess_images(original_images_path, preprocessed_images_path):
+def preprocess_images(original_images_path, preprocessed_images_path, downsample_hw_size=None):
     """
     Apply CLAHE normalization and save new images.
     Inputs:
         original_images_path: directory containing original images.
         preprocessed_images_path: where to save preprocessed images.
+        downsample_hw_size: (h,w) dimensions to resize the image to.
     """
     global IMAGE_DATASET_FOLDER_PATH
     IMAGE_DATASET_FOLDER_PATH = preprocessed_images_path
@@ -179,6 +183,19 @@ def preprocess_images(original_images_path, preprocessed_images_path):
         for file in files:
             fpath = os.path.join(root, file)
             im = _clahe_normalize(cv2.imread(fpath))
+            if downsample_hw_size:
+                assert len(downsample_hw_size) == 2
+                if cv2.imread(fpath).ndim == 3:
+                    oh, ow, _ = cv2.imread(fpath).shape
+                else:
+                    oh, ow = cv2.imread(fpath).shape
+                nh, nw = downsample_hw_size
+                if nh > oh or nw > ow:
+                    # the image is being upsampled rather than downsampled
+                    im = cv2.resize(im, downsample_hw_size, interpolation=cv2.INTER_LINEAR) 
+                else:
+                    im = cv2.resize(im, downsample_hw_size, interpolation=cv2.INTER_AREA) 
+            
             cv2.imwrite(os.path.join(preprocessed_images_path, file), im)
 
 def _clahe_normalize(image):
