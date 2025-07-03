@@ -102,12 +102,19 @@ def get_mask(image_name, class_id):
 
     image_id_map = {img["file_name"]: img["id"] for img in coco["images"]}
     image_info_map = {img["id"]: img for img in coco["images"]}
+
+    matching_file = None
+    for name in image_id_map:
+        if name.startswith(file_name):
+            matching_file = name
+            break
+
+    if not matching_file:
+        raise ValueError(f"No matching annotation found for image '{file_name}'.")
+
     annotations_per_image = defaultdict(list)
     for ann in coco["annotations"]:
         annotations_per_image[ann["image_id"]].append(ann)
-
-    if file_name not in image_id_map:
-        raise ValueError(f"Image {file_name} not found in COCO annotations.")
 
     image_id = image_id_map[file_name]
     image_info = image_info_map[image_id]
