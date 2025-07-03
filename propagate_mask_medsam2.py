@@ -256,15 +256,18 @@ def combine_class_masks(indiv_class_masks_list, output_dir=None, show=True):
             plt.axis('off')
             plt.show()
 
-def generate_distance_heatmap(mask_volume, distance_threshold_px, overlay=True, show=False, output_path=None):
+def generate_distance_heatmap(mask_volume, distance_threshold_px_near=np.nan, distance_threshold_px_far=np.nan, near_color_rgb=(163, 222, 153), far_color_rgb=(205, 164, 224), overlay=True, show=False, output_path=None, use_2d_xy_distances=False):
     """
     Create a 3D volume with pixels where pixels at least distance_threshold_px from the object instance represented in masks
     are colored.
     Inputs:
         mask_volume: np array of binary segmentation masks per frame.
-        distance_threshold_px: Distance threshold in pixels. Pixels farther than this distance from the object will be highlighted.
+        distance_threshold_px_near: Distance threshold in pixels. Pixels less than this distance from the object will be highlighted.
+        distance_threshold_px_far: Distance threshold in pixels. Pixels more than this distance from the object will be highlighted.
         overlay: If True, returns a 3D volume where distant pixels are overlaid on the original masks.
                  If False, returns only the distance-based mask (highlighted pixels).
+        show: if True, shows each slice.
+        use_2d_xy_distances: if True, calculates distances in 2D within each slice only, not 3D across the volume.
     Outputs:
         A 3D volume where pixels meeting the distance condition are marked. If `overlay` is True, original object pixels are preserved.
     """
@@ -275,21 +278,31 @@ def generate_distance_heatmap(mask_volume, distance_threshold_px, overlay=True, 
 
     # Store colors
     red = np.array([255, 0, 0], dtype=np.uint8) 
-    sky_blue = np.array([123, 201, 232], dtype=np.float32)  
 
-    inverted_mask_vol = np.invert(mask_volume)
+    inverted_mask_vol = np.logical_not(mask_volume).astype(np.uint8)
     # Distance transform: replaces each nonzero element with its shortest dist to zero-valued elements
-    distance_vol = distance_transform_edt(inverted_mask_vol)
-    distance_mask = distance_vol >= distance_threshold_px
+    if use_2d_xy_distances:
+        # Compute distance per frame (XY only)
+        distance_vol = np.zeros_like(mask_volume, dtype=np.float32)
+        for i in range(mask_volume.shape[0]):
+            distance_vol[i] = distance_transform_edt(inverted_mask_vol[i])
+    else:
+        # Use 3D distances
+        distance_vol = distance_transform_edt(inverted_mask_vol)
+        
+    distance_mask_near = distance_vol <= distance_threshold_px_near
+    distance_mask_far = distance_vol >= distance_threshold_px_far
 
     # Apply colors to output
-    output[distance_mask] = sky_blue
+    output[distance_mask_far] = far_color_rgb
 
     # Remove pixels near edge
-    output[:,:distance_threshold_px, :] = np.array([0,0,0])
-    output[:,:, :distance_threshold_px] = np.array([0,0,0])
-    output[:,h-distance_threshold_px:, :] = np.array([0,0,0])
-    output[:,:, w-distance_threshold_px:] = np.array([0,0,0])
+    output[:,:distance_threshold_px_far, :] = np.array([0,0,0])
+    output[:,:, :distance_threshold_px_far] = np.array([0,0,0])
+    output[:,h-distance_threshold_px_far:, :] = np.array([0,0,0])
+    output[:,:, w-distance_threshold_px_far:] = np.array([0,0,0])
+
+    output[distance_mask_near] = near_color_rgb
 
     # Overlay red where objects exist
     if overlay:
@@ -305,7 +318,7 @@ def generate_distance_heatmap(mask_volume, distance_threshold_px, overlay=True, 
     if output_path:
         tifffile.imwrite(
             output_path,
-            mask_volume,
+            output,
             bigtiff=True,
             photometric='rgb',
             compression='deflate' # Lossless

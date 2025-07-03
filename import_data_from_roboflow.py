@@ -237,6 +237,24 @@ def get_image(image_name):
     
     raise FileNotFoundError(f"No matching images for {image_name} were found under {IMAGE_DATASET_FOLDER_PATH}.")
 
+def get_class_id_from_name(class_name):
+    global COCO_PATH
+    with open(COCO_PATH, 'r') as f:
+        coco = json.load(f)
+
+    # First, look for exact match
+    for cat in coco['categories']:
+        if cat['name'] == class_name:
+            return cat['id']
+
+    # Fallback to fuzzy match
+    for cat in coco['categories']:
+        if class_name in cat['name']:
+            print(f"Warning: using fuzzy match for '{class_name}' → '{cat['name']}'")
+            return cat['id']
+        
+    raise ValueError(f"Class name '{class_name}' not found in COCO categories.")
+
 def get_image_dataset_folder_path():
     global IMAGE_DATASET_FOLDER_PATH
     return IMAGE_DATASET_FOLDER_PATH
