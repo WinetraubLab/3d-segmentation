@@ -19,7 +19,7 @@ def generate_distance_heatmap(mask_volume, distance_threshold_px_near=np.nan, di
         show: if True, shows each slice.
         use_2d_xy_distances: if True, calculates distances in 2D within each slice only, not 3D across the volume.
     Outputs:
-        A 3D volume where pixels meeting the distance condition are marked. If `overlay` is True, original object pixels are preserved.
+        A RGB 3D volume (Z,Y,X,3) where pixels meeting the distance condition are marked. If `overlay` is True, original object pixels are preserved.
     """
     # rgb replace the 1's in binary mask_volume with color.
     frames, h, w = mask_volume.shape
@@ -82,7 +82,7 @@ def regions_close_to_object_types(list_of_object_masks, thresh=50, use_2d_xy_dis
             will be highlighted.
         use_2d_xy_distances: if True, calculates distance using only xy slices, not as a 3d volume.
     Returns:
-        A binary segmentation volume in the same shape as the masks in list_of_object_masks. 
+        A binary segmentation volume (Z,Y,X) in the same shape as the masks in list_of_object_masks. 
         Value of 1 means the pixel is less than thresh distance from all objects.
     """
     distance_vols = []
