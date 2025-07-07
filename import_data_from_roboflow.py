@@ -255,6 +255,15 @@ def get_class_id_from_name(class_name):
         
     raise ValueError(f"Class name '{class_name}' not found in COCO categories.")
 
+def get_all_class_name_id():
+    global COCO_PATH
+    with open(COCO_PATH, 'r') as f:
+        coco = json.load(f)
+
+    # First, look for exact match
+    for cat in coco['categories']:
+        print(f"Class {cat['name']}: id {cat['id']}")
+
 def get_image_dataset_folder_path():
     global IMAGE_DATASET_FOLDER_PATH
     return IMAGE_DATASET_FOLDER_PATH
