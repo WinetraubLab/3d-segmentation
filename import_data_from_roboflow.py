@@ -159,7 +159,7 @@ def create_mask_volume(class_id, downsample_hw_size=None):
     for idx, image_f in enumerate(image_files):
         try:
             mask = get_mask(image_f, class_id).astype(np.float32)
-            if downsample_hw_size:
+            if downsample_hw_size is not None:
                 assert len(downsample_hw_size) == 2
                 mask = cv2.resize(mask, downsample_hw_size, interpolation=cv2.INTER_NEAREST) # nearest neighbor for masks
             mask_dict[idx] = mask
@@ -183,7 +183,7 @@ def preprocess_images(original_images_path, preprocessed_images_path, downsample
         for file in files:
             fpath = os.path.join(root, file)
             im = _clahe_normalize(cv2.imread(fpath))
-            if downsample_hw_size:
+            if downsample_hw_size is not None:
                 assert len(downsample_hw_size) == 2
                 if cv2.imread(fpath).ndim == 3:
                     oh, ow, _ = cv2.imread(fpath).shape
