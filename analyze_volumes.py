@@ -1,6 +1,7 @@
 import tifffile
 import numpy as np
 from scipy.ndimage import distance_transform_edt
+from scipy import ndimage
 import matplotlib.pyplot as plt
 
 def generate_distance_heatmap(mask_volume, distance_threshold_px_near=np.nan, distance_threshold_px_far=np.nan, 
@@ -104,3 +105,77 @@ def regions_close_to_object_types(list_of_object_masks, thresh=50, use_2d_xy_dis
         for i in range(len(distance_vols)-1):
             close_to_all = np.logical_and(close_to_all < thresh, distance_vols[i+1] < thresh).astype(np.uint8)
     return close_to_all
+
+def tumor_margin(tumor_segmentation_volume, distance_thresh_px=10):
+    """
+    Inputs:
+        tumor_segmentation_volume: binary segmentation masks shape (Z,Y,X) where 1 denotes tumor
+        distance_thresh_um: distance in px from boundary of tumor to consider part of the margin
+    Returns: (Z,Y,X) binary mask volume
+    """
+    margin_mask = np.zeros_like(tumor_segmentation_volume)
+    z_slices = tumor_segmentation_volume.shape[0]
+
+    for z in range(z_slices):
+        slice_ = tumor_segmentation_volume[z]
+
+        # Find edges
+        edge = ndimage.binary_dilation(slice_) ^ ndimage.binary_erosion(slice_)
+
+        # Compute distance from border
+        distance_map = ndimage.distance_transform_edt(~edge)
+
+        # threshold
+        within_mask = distance_map <= distance_thresh_px
+        margin_mask[z] = within_mask
+
+    return margin_mask
+
+def tumor_core(tumor_segmentation_volume, distance_thresh_px):
+    """
+    Inputs:
+        tumor_segmentation_volume: binary segmentation masks shape (Z,Y,X) where 1 denotes tumor
+        distance_thresh_um: distance in px from boundary of tumor to consider part of the tumor core
+    Returns: (Z,Y,X) binary mask volume
+    """
+    z_slices = tumor_segmentation_volume.shape[0]
+
+    for z in range(z_slices):
+        slice_ = tumor_segmentation_volume[z]
+
+        # Compute distance from 0s
+        distance_map = ndimage.distance_transform_edt(slice_)
+
+        # threshold
+        mask = distance_map >= distance_thresh_px
+
+    return mask
+
+def colorize_tumor(tumor_segmentation_mask, margin_distance_thresh_um, core_distance_thresh_um,
+                   core_color_rgb=[252, 207, 3], margin_color_rgb=[0, 70, 140]):
+    """
+    Colorizes tumor based on distance classification (tumor margin or core).
+    Inputs: 
+        tumor_segmentation_mask: binary segmentation masks shape (Z,Y,X) where 1 denotes tumor
+        margin_distance_thresh_um: distance in um from boundary of tumor to consider part of the margin
+        core_distance_thresh_um: distance in um from boundary of tumor to consider part of the core
+    Returns: (Z,Y,X,3) colored volume
+    """
+    dist_inside = distance_transform_edt(tumor_segmentation_mask)
+
+    # Tumor core
+    core_mask = (tumor_segmentation_mask == 1) & (dist_inside >= core_distance_thresh_um)
+
+    # Tumor margin
+    margin_mask = (tumor_segmentation_mask == 1) & (dist_inside <= margin_distance_thresh_um)
+
+    # Intermediate regions
+    intermediate_mask = (tumor_segmentation_mask == 1) & (~core_mask) & (~margin_mask)
+
+    colored_volume = np.zeros(tumor_segmentation_mask.shape + (3,), dtype=np.uint8)
+    gray         = [160, 160, 160] 
+    colored_volume[core_mask] = core_color_rgb
+    colored_volume[margin_mask] = margin_color_rgb
+    colored_volume[intermediate_mask] = gray
+
+    return colored_volume
