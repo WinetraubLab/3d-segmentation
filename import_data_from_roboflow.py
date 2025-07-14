@@ -181,21 +181,22 @@ def preprocess_images(original_images_path, preprocessed_images_path, downsample
     os.makedirs(preprocessed_images_path, exist_ok=True)
     for root, _, files in os.walk(original_images_path):
         for file in files:
-            fpath = os.path.join(root, file)
-            im = _clahe_normalize(cv2.imread(fpath))
-            if downsample_hw_size is not None:
-                assert len(downsample_hw_size) == 2
-                if cv2.imread(fpath).ndim == 3:
-                    oh, ow, _ = cv2.imread(fpath).shape
-                else:
-                    oh, ow = cv2.imread(fpath).shape
-                nh, nw = downsample_hw_size
-                if nh > oh or nw > ow:
-                    # the image is being upsampled rather than downsampled
-                    im = cv2.resize(im, downsample_hw_size, interpolation=cv2.INTER_LINEAR) 
-                else:
-                    im = cv2.resize(im, downsample_hw_size, interpolation=cv2.INTER_AREA) 
-            
+            if not file.lower().endswith('.json'):
+                fpath = os.path.join(root, file)
+                im = _clahe_normalize(cv2.imread(fpath))
+                if downsample_hw_size is not None:
+                    assert len(downsample_hw_size) == 2
+                    if cv2.imread(fpath).ndim == 3:
+                        oh, ow, _ = cv2.imread(fpath).shape
+                    else:
+                        oh, ow = cv2.imread(fpath).shape
+                    nh, nw = downsample_hw_size
+                    if nh > oh or nw > ow:
+                        # the image is being upsampled rather than downsampled
+                        im = cv2.resize(im, downsample_hw_size, interpolation=cv2.INTER_LINEAR) 
+                    else:
+                        im = cv2.resize(im, downsample_hw_size, interpolation=cv2.INTER_AREA) 
+                
             cv2.imwrite(os.path.join(preprocessed_images_path, file), im)
 
 def _clahe_normalize(image):
