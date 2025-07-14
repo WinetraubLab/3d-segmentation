@@ -74,14 +74,13 @@ def generate_distance_heatmap(mask_volume, distance_threshold_px_near=np.nan, di
     output = output.astype(np.uint8)
     return output
 
-def regions_close_to_object_types(list_of_object_masks, thresh=50, use_2d_xy_distances=False):
+def regions_close_to_object_types(list_of_object_masks, thresh=50):
     """
     Inputs:
         list_of_object_masks: list of binary segmentation volumes: (Z,Y,X) np arrays, one for each individual object
             to include in this distance calculation. Must all be same shape.
         thresh (px): areas that are this distance or less away from all objects in list_of_object_masks
             will be highlighted.
-        use_2d_xy_distances: if True, calculates distance using only xy slices, not as a 3d volume.
     Returns:
         A binary segmentation volume (Z,Y,X) in the same shape as the masks in list_of_object_masks. 
         Value of 1 means the pixel is less than thresh distance from all objects.
@@ -91,14 +90,9 @@ def regions_close_to_object_types(list_of_object_masks, thresh=50, use_2d_xy_dis
 
         # Get distances from all other areas to this object
         inverted_mask_vol = np.logical_not(mask_volume).astype(np.uint8)
-        if use_2d_xy_distances:
-            # Compute distance per frame (XY only)
-            distance_vol = np.zeros_like(mask_volume, dtype=np.float32)
-            for i in range(mask_volume.shape[0]):
-                distance_vol[i] = distance_transform_edt(inverted_mask_vol[i])
-        else:
-            # Use 3D distances
-            distance_vol = distance_transform_edt(inverted_mask_vol)    
+        
+        # Use 3D distances
+        distance_vol = distance_transform_edt(inverted_mask_vol)    
         distance_vols.append(distance_vol)
 
         close_to_all = distance_vols[0]

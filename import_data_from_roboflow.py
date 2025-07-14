@@ -197,7 +197,7 @@ def preprocess_images(original_images_path, preprocessed_images_path, downsample
                     else:
                         im = cv2.resize(im, downsample_hw_size, interpolation=cv2.INTER_AREA) 
                 
-            cv2.imwrite(os.path.join(preprocessed_images_path, file), im)
+                cv2.imwrite(os.path.join(preprocessed_images_path, file), im)
 
 def _clahe_normalize(image):
     """
