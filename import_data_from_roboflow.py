@@ -36,7 +36,7 @@ def init_from_roboflow(workspace_name, project_name, api_key):
             if file.endswith('.coco.json'):
                 COCO_PATH = (os.path.join(root, file))
 
-    class_ids = list_all_labels(COCO_PATH)
+    class_ids = list_all_labels()
 
     return class_ids
 
@@ -102,14 +102,24 @@ def get_mask(image_name, class_id):
 
     image_id_map = {img["file_name"]: img["id"] for img in coco["images"]}
     image_info_map = {img["id"]: img for img in coco["images"]}
+    
+    def _normalize_filename(name):
+        return ''.join(c for c in name if c.isalnum()).lower()
+
+    matching_file = None
+    for name in image_id_map:
+        if _normalize_filename(name).startswith(_normalize_filename(file_name)):
+            matching_file = name
+            break
+
+    if not matching_file:
+        raise ValueError(f"No matching annotation found for image '{file_name}'.")
+
     annotations_per_image = defaultdict(list)
     for ann in coco["annotations"]:
         annotations_per_image[ann["image_id"]].append(ann)
 
-    if file_name not in image_id_map:
-        raise ValueError(f"Image {file_name} not found in COCO annotations.")
-
-    image_id = image_id_map[file_name]
+    image_id = image_id_map[matching_file]
     image_info = image_info_map[image_id]
     height, width = image_info["height"], image_info["width"]
 
@@ -134,51 +144,60 @@ def get_mask(image_name, class_id):
 
     return mask
 
-def create_mask_volume(class_id):
+def create_mask_volume(class_id, downsample_hw_size=None):
     """
     Inputs:
         class_id: coco-annotation class for which to create the segmentation mask volume.
     Returns:
-        mask_volume: array shape (z,x,y). array[z] will be NaN array if no segmentation mask is available for that frame,
-            otherwise it will be loaded from COCO annotation file.
+        mask_volume: dictionary. dict[z] will be the segmentation mask loaded from COCO annotation file.
     """
     global IMAGE_DATASET_FOLDER_PATH
-    
+
     image_files = list_all_images()
-    image_paths = [os.path.join(IMAGE_DATASET_FOLDER_PATH, f) for f in image_files]
-    
-    # Load first image to get shape
-    sample_img = cv2.imread(image_paths[0], cv2.IMREAD_GRAYSCALE)
-    x, y = sample_img.shape
-    z = len(image_paths)
-    
-    # Initialize segmentation volume with NaNs
-    mask_volume = np.full((z, x, y), np.nan, dtype=np.float32)
+    mask_dict = {}
 
     for idx, image_f in enumerate(image_files):
         try:
-            mask = get_mask(image_f, class_id)
-            mask_volume[idx] = mask.astype(np.float32)
+            mask = get_mask(image_f, class_id).astype(np.float32)
+            if downsample_hw_size is not None:
+                assert len(downsample_hw_size) == 2
+                mask = cv2.resize(mask, downsample_hw_size, interpolation=cv2.INTER_NEAREST) # nearest neighbor for masks
+            mask_dict[idx] = mask
         except ValueError:
-            # Image not in annotations = leave slice as NaN
-            continue
-    return mask_volume
+            continue  # Skip if no annotation
 
-def preprocess_images(original_images_path, preprocessed_images_path):
+    return mask_dict
+
+def preprocess_images(original_images_path, preprocessed_images_path, downsample_hw_size=None):
     """
     Apply CLAHE normalization and save new images.
     Inputs:
         original_images_path: directory containing original images.
         preprocessed_images_path: where to save preprocessed images.
+        downsample_hw_size: (h,w) dimensions to resize the image to.
     """
     global IMAGE_DATASET_FOLDER_PATH
     IMAGE_DATASET_FOLDER_PATH = preprocessed_images_path
     os.makedirs(preprocessed_images_path, exist_ok=True)
     for root, _, files in os.walk(original_images_path):
         for file in files:
-            fpath = os.path.join(root, file)
-            im = _clahe_normalize(cv2.imread(fpath))
-            cv2.imwrite(os.path.join(preprocessed_images_path, file), im)
+            if not file.lower().endswith('.json'):
+                fpath = os.path.join(root, file)
+                im = _clahe_normalize(cv2.imread(fpath))
+                if downsample_hw_size is not None:
+                    assert len(downsample_hw_size) == 2
+                    if cv2.imread(fpath).ndim == 3:
+                        oh, ow, _ = cv2.imread(fpath).shape
+                    else:
+                        oh, ow = cv2.imread(fpath).shape
+                    nh, nw = downsample_hw_size
+                    if nh > oh or nw > ow:
+                        # the image is being upsampled rather than downsampled
+                        im = cv2.resize(im, downsample_hw_size, interpolation=cv2.INTER_LINEAR) 
+                    else:
+                        im = cv2.resize(im, downsample_hw_size, interpolation=cv2.INTER_AREA) 
+                
+                cv2.imwrite(os.path.join(preprocessed_images_path, file), im)
 
 def _clahe_normalize(image):
     """
@@ -218,6 +237,33 @@ def get_image(image_name):
                 return _clahe_normalize(cv2.imread(fpath))
     
     raise FileNotFoundError(f"No matching images for {image_name} were found under {IMAGE_DATASET_FOLDER_PATH}.")
+
+def get_class_id_from_name(class_name):
+    global COCO_PATH
+    with open(COCO_PATH, 'r') as f:
+        coco = json.load(f)
+
+    # First, look for exact match
+    for cat in coco['categories']:
+        if cat['name'] == class_name:
+            return cat['id']
+
+    # Fallback to fuzzy match
+    for cat in coco['categories']:
+        if class_name in cat['name']:
+            print(f"Warning: using fuzzy match for '{class_name}' → '{cat['name']}'")
+            return cat['id']
+        
+    raise ValueError(f"Class name '{class_name}' not found in COCO categories.")
+
+def get_all_class_name_id():
+    global COCO_PATH
+    with open(COCO_PATH, 'r') as f:
+        coco = json.load(f)
+
+    # First, look for exact match
+    for cat in coco['categories']:
+        print(f"Class {cat['name']}: id {cat['id']}")
 
 def get_image_dataset_folder_path():
     global IMAGE_DATASET_FOLDER_PATH

@@ -1,7 +1,7 @@
 import numpy as np
 import numpy.testing as npt
 import unittest
-import import_data_from_roboflow, propagate_mask_medsam2, export_coco
+import import_data_from_roboflow, propagate_mask_medsam2, export_coco, analyze_volumes
 
 class Test3dSegmentation(unittest.TestCase):
 
@@ -113,3 +113,33 @@ class Test3dSegmentation(unittest.TestCase):
         fused_masks1 = self.model.propagate(self.image_dataset_folder_path, self.seg_vol_1)
         export_coco.save_segmentations_as_coco([fused_masks1], "test_vectors/predicted_segmentations_coco.json")
         export_coco.coco_to_tiff("test_vectors/predicted_segmentations_coco.json", "test_vectors/output_volume.tiff")
+
+    # Analyze volumes
+    def test_dist_heatmap_2d(self):
+        toy_mask = np.zeros((5,10,12))
+        toy_mask[0,0,0] = 1
+        map_2d = analyze_volumes.generate_distance_heatmap(toy_mask, distance_threshold_px_near=2, distance_threshold_px_far=5, 
+                              near_color_rgb=(163, 222, 153), far_color_rgb=(205, 164, 224),
+                              overlay=True, show=False, 
+                              output_path=None, use_2d_xy_distances=True)
+        assert map_2d[0,0,0,0]==255
+        assert map_2d[1,0,0,0]==0
+
+    def test_dist_heatmap_3d(self):
+        toy_mask = np.zeros((5,10,12))
+        toy_mask[0,0,0] = 1
+        map_3d = analyze_volumes.generate_distance_heatmap(toy_mask, distance_threshold_px_near=2, distance_threshold_px_far=5, 
+                              near_color_rgb=(163, 222, 153), far_color_rgb=(205, 164, 224),
+                              overlay=True, show=False, 
+                              output_path=None, use_2d_xy_distances=False)
+        assert map_3d[0,0,0,0]== 255
+        assert map_3d[1,0,0,0]==163
+
+    def test_close_map_2d_3d(self):
+        toy_mask1 = np.zeros((5,10,12))
+        toy_mask1[0,0,0] = 1
+        toy_mask2 = np.zeros((5,10,12))
+        toy_mask2[5,0,0] = 1
+        map_3d = analyze_volumes.regions_close_to_object_types([toy_mask1, toy_mask2],
+                                                                thresh=5, use_2d_xy_distances=False)
+        assert map_3d[3,0,0] == 1
