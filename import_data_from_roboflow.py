@@ -193,9 +193,9 @@ def preprocess_images(original_images_path, preprocessed_images_path, downsample
                     nh, nw = downsample_hw_size
                     if nh > oh or nw > ow:
                         # the image is being upsampled rather than downsampled
-                        im = cv2.resize(im, downsample_hw_size, interpolation=cv2.INTER_LINEAR) 
+                        im = cv2.resize(im, (nw, nh), interpolation=cv2.INTER_LINEAR) 
                     else:
-                        im = cv2.resize(im, downsample_hw_size, interpolation=cv2.INTER_AREA) 
+                        im = cv2.resize(im, (nw, nh), interpolation=cv2.INTER_AREA) 
                 
                 cv2.imwrite(os.path.join(preprocessed_images_path, file), im)
 
