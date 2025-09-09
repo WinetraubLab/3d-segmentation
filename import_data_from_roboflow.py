@@ -161,7 +161,9 @@ def create_mask_volume(class_id, downsample_hw_size=None):
             mask = get_mask(image_f, class_id).astype(np.float32)
             if downsample_hw_size is not None:
                 assert len(downsample_hw_size) == 2
-                mask = cv2.resize(mask, downsample_hw_size, interpolation=cv2.INTER_NEAREST) # nearest neighbor for masks
+                nh, nw = downsample_hw_size
+                mask = cv2.resize(mask, (nw, nh), interpolation=cv2.INTER_NEAREST) # nearest neighbor for masks
+                # mask = cv2.resize(mask, downsample_hw_size, interpolation=cv2.INTER_NEAREST) # nearest neighbor for masks
             mask_dict[idx] = mask
         except ValueError:
             continue  # Skip if no annotation
@@ -193,9 +195,9 @@ def preprocess_images(original_images_path, preprocessed_images_path, downsample
                     nh, nw = downsample_hw_size
                     if nh > oh or nw > ow:
                         # the image is being upsampled rather than downsampled
-                        im = cv2.resize(im, downsample_hw_size, interpolation=cv2.INTER_LINEAR) 
+                        im = cv2.resize(im, (nw, nh), interpolation=cv2.INTER_LINEAR) 
                     else:
-                        im = cv2.resize(im, downsample_hw_size, interpolation=cv2.INTER_AREA) 
+                        im = cv2.resize(im, (nw, nh), interpolation=cv2.INTER_AREA) 
                 
                 cv2.imwrite(os.path.join(preprocessed_images_path, file), im)
 

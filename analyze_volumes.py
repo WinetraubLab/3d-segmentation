@@ -3,6 +3,8 @@ import numpy as np
 from scipy.ndimage import distance_transform_edt
 from scipy import ndimage
 import matplotlib.pyplot as plt
+import export_coco
+import json
 
 def generate_distance_heatmap(mask_volume, distance_threshold_px_near=np.nan, distance_threshold_px_far=np.nan, 
                               near_color_rgb=(163, 222, 153), far_color_rgb=(205, 164, 224), object_color_rgb=(255,0,0), 
@@ -105,3 +107,46 @@ def regions_close_to_object_types(list_of_object_masks, thresh=50, color=[164, 2
     output[close_to_all==1] = color
     output = output.astype(np.uint8)
     return output
+def export_near_far_regions_as_coco(mask_volume, distance_threshold_px_near, distance_threshold_px_far,
+                                     output_path="near_far_regions_coco.json", use_2d_xy_distances=False):
+    """
+    Generates COCO-format JSON for near and far regions around a binary mask.
+    Only includes 'near_region' and 'far_region' categories in the final JSON.
+    """
+
+    from scipy.ndimage import distance_transform_edt
+    import numpy as np
+    import os
+
+    inverted_mask_vol = np.logical_not(mask_volume).astype(np.uint8)
+    if use_2d_xy_distances:
+        distance_vol = np.zeros_like(mask_volume, dtype=np.float32)
+        for i in range(mask_volume.shape[0]):
+            distance_vol[i] = distance_transform_edt(inverted_mask_vol[i])
+    else:
+        distance_vol = distance_transform_edt(inverted_mask_vol)
+
+    near_region_mask = (distance_vol <= distance_threshold_px_near).astype(np.uint8)
+    far_region_mask  = (distance_vol >= distance_threshold_px_far).astype(np.uint8)
+
+    # save json output
+    mask_list = [near_region_mask, far_region_mask]
+    export_coco.save_segmentations_as_coco(mask_list, coco_output_dir=output_path)
+
+    # rename categories
+    with open(output_path, "r") as f:
+        coco_data = json.load(f)
+
+    coco_data["categories"] = [
+        {"id": 0, "name": "near_region", "supercategory": "distance"},
+        {"id": 1, "name": "far_region", "supercategory": "distance"},
+    ]
+
+    valid_category_ids = {0, 1}
+    coco_data["annotations"] = [
+        ann for ann in coco_data["annotations"] if ann["category_id"] in valid_category_ids
+    ]
+
+    # overwrite original w renamed version
+    with open(output_path, "w") as f:
+        json.dump(coco_data, f, indent=2)
