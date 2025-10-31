@@ -139,7 +139,10 @@ class CustomMEDSAM2():
                     predicted_mask = output_masks_binary[prev_idx]
                     predicted_logits = output_masks_logit[prev_idx]
 
-                predicted_logits = predicted_logits.cpu().numpy()
+                if isinstance(predicted_logits, torch.Tensor):
+                    predicted_logits = predicted_logits.cpu().numpy()
+                if isinstance(predicted_mask, torch.Tensor):
+                    predicted_mask = predicted_mask.cpu().numpy()
                 predicted_mask = predicted_mask.astype(np.uint8)
 
             output_masks_binary[i] = np.squeeze(predicted_mask)
