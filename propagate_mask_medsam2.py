@@ -45,7 +45,7 @@ class CustomMEDSAM2():
             max_frame_num_to_track=1, reverse=reverse):
 
             logit = out_mask_logits[0].cpu()
-            mask = (logit > 0.0).numpy()
+            mask = (logit > -2.0).numpy()
             return mask, logit
 
         return None, None 
@@ -113,7 +113,7 @@ class CustomMEDSAM2():
                     mask=gt_mask,
                 )
                 predicted_mask = gt_mask
-                predicted_logits = (gt_mask * 20.0) - 10.0  # large positive where mask=1, large neg where mask=0
+                predicted_logits = (gt_mask * 6.0) - 3.0  # large positive where mask=1, large neg where mask=0
             else:
                 # otherwise, predict current mask using previous frame
                 if reverse:
