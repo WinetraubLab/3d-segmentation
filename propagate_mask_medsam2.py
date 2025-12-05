@@ -112,8 +112,23 @@ class CustomMEDSAM2():
                     obj_id=0,
                     mask=gt_mask,
                 )
-                predicted_mask = gt_mask
-                predicted_logits = (gt_mask * 20.0) - 10.0  # large positive where mask=1, large neg where mask=0
+                # predicted_mask = gt_mask
+                # predicted_logits = (gt_mask * 20.0) - 10.0  # large positive where mask=1, large neg where mask=0
+                predicted_mask, predicted_logits = self._predict_mask(
+                    predictor,
+                    inference_state,
+                    i,
+                    gt_mask, 
+                    0,
+                    reverse=reverse
+                )
+                if predicted_mask is None or predicted_logits is None:
+                    print(f"Warning: Prediction failed at frame {i}. Using previous mask from frame {prev_idx} as fallback.")
+
+                    # Fallback: use previous mask
+                    predicted_mask = output_masks_binary[prev_idx]
+                    predicted_logits = output_masks_logit[prev_idx]
+
             else:
                 # otherwise, predict current mask using previous frame
                 if reverse:
