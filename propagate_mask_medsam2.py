@@ -182,8 +182,44 @@ class CustomMEDSAM2():
         mask_binary_forward, mask_logit_forward = self._propagate_single_direction(image_dataset_folder_path, binary_segmentations)
         mask_binary_backward, mask_logit_backward = self._propagate_single_direction(image_dataset_folder_path, binary_segmentations, reverse=True)
         
-        # Merge forward and backward predictions
-        avg_logits = torch.tensor(np.nanmean(np.stack([mask_logit_forward, mask_logit_backward]), axis=0))
+        # Get keyframe indices for distance-weighted fusion
+        keyframe_indices = sorted(self._get_keyframe_indices_from_sparse_segmentations(binary_segmentations))
+        
+        # Get number of frames and mask shape
+        n_frames = len(mask_logit_forward)
+        mask_shape = mask_logit_forward[0].shape if n_frames > 0 and not np.isnan(mask_logit_forward[0]).all() else mask_logit_backward[0].shape
+        
+        # Initialize merged logits with NaN
+        merged_logits = [np.full(mask_shape, np.nan) for _ in range(n_frames)]
+        
+        # Perform distance-weighted fusion for each keyframe pair
+        for i in range(len(keyframe_indices) - 1):
+            start_idx = keyframe_indices[i]
+            end_idx = keyframe_indices[i + 1]
+            
+            # Merge masks for frames between this keyframe pair
+            for frame_idx in range(start_idx, end_idx + 1):
+                forward_logit = mask_logit_forward[frame_idx]
+                backward_logit = mask_logit_backward[frame_idx]
+                
+                # Check if both predictions are valid (not all NaN)
+                forward_valid = forward_logit is not None and not np.isnan(forward_logit).all()
+                backward_valid = backward_logit is not None and not np.isnan(backward_logit).all()
+                
+                if forward_valid and backward_valid:
+                    # Distance-weighted fusion: favor closer keyframe
+                    # alpha = distance to end / total distance (higher alpha = more weight to forward)
+                    alpha = (end_idx - frame_idx) / (end_idx - start_idx) if end_idx != start_idx else 0.5
+                    merged_logits[frame_idx] = alpha * forward_logit + (1 - alpha) * backward_logit
+                elif forward_valid:
+                    merged_logits[frame_idx] = forward_logit
+                elif backward_valid:
+                    merged_logits[frame_idx] = backward_logit
+                # else: keep as NaN
+        
+        # Convert to numpy array and then tensor, apply sigmoid
+        merged_logits_array = np.stack(merged_logits)
+        avg_logits = torch.tensor(merged_logits_array)
         prob = torch.sigmoid(avg_logits).cpu().numpy()
 
         prob_np = np.squeeze(np.array(prob)) 
