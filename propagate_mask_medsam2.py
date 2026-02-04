@@ -106,11 +106,14 @@ class CustomMEDSAM2():
         for i in process_range:
             if i in keyframe_indices:
                 # if mask segmentation is known, set mask and logits
-                gt_mask = binary_segmentations[i]
+                gt_mask = binary_segmentations[i].copy()
                 # Smooth the ground truth mask before using as prompt
                 if sigma_xy > 0:
                     gt_mask = gaussian_filter(gt_mask.astype(float), sigma=sigma_xy)
-                    gt_mask = (gt_mask > 0.5).astype(gt_mask.dtype if gt_mask.dtype != float else np.uint8)
+                    gt_mask = (gt_mask > 0.5).astype(np.uint8)
+                else:
+                    # Ensure mask is uint8 binary format
+                    gt_mask = (gt_mask > 0.5).astype(np.uint8)
                 # predicted_mask = gt_mask
                 # predicted_logits = (gt_mask * 20.0) - 10.0  # large positive where mask=1, large neg where mask=0
                 predicted_mask, predicted_logits = self._predict_mask(
@@ -144,10 +147,10 @@ class CustomMEDSAM2():
                     predicted_logits = np.full(mask_shape, np.nan)
                 else:
                     # Smooth the previous frame's mask before using as prompt
-                    prev_mask = output_masks_binary[prev_idx]
+                    prev_mask = output_masks_binary[prev_idx].copy()
                     if sigma_xy > 0:
                         prev_mask = gaussian_filter(prev_mask.astype(float), sigma=sigma_xy)
-                        prev_mask = (prev_mask > 0.5).astype(prev_mask.dtype if prev_mask.dtype != float else np.uint8)
+                        prev_mask = (prev_mask > 0.5).astype(np.uint8)
                     
                     predicted_mask, predicted_logits = self._predict_mask(
                         predictor,
