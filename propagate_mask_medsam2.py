@@ -114,6 +114,13 @@ class CustomMEDSAM2():
                 else:
                     # Ensure mask is uint8 binary format
                     gt_mask = (gt_mask > 0.5).astype(np.uint8)
+                
+                predictor.add_new_mask(
+                    inference_state=inference_state,
+                    frame_idx=i,
+                    obj_id=0,
+                    mask=gt_mask,
+                )
                 # predicted_mask = gt_mask
                 # predicted_logits = (gt_mask * 20.0) - 10.0  # large positive where mask=1, large neg where mask=0
                 predicted_mask, predicted_logits = self._predict_mask(
