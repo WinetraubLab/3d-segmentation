@@ -61,13 +61,14 @@ class CustomMEDSAM2():
         keyframe_indices = list(binary_segmentations.keys())
         return keyframe_indices
 
-    def _propagate_single_direction(self, image_dataset_folder_path, binary_segmentations, reverse=False):
+    def _propagate_single_direction(self, image_dataset_folder_path, binary_segmentations, reverse=False, sigma_xy=0.0):
         """
         Forward or backward pass for segmentation prediction. Uses ground truth masks for keyframes, otherwise uses previous prediction.
         Inputs:
             image_dataset_folder_path: Directory containing preprocessed images to segment.
             binary_segmentations: dict containing binary segmentation mask for some frames.
             reverse: if True, perform backward pass
+            sigma_xy: gaussian smoothing sigma on x and y axes for prompt masks
         Returns:
             output_masks_binary: list of binary mask predictions (ndarray). NaN for a specific frame if no valid prediction 
             output_masks_logit: list of logits for mask predictions (ndarray). NaN for a specific frame if no valid prediction 
@@ -106,6 +107,10 @@ class CustomMEDSAM2():
             if i in keyframe_indices:
                 # if mask segmentation is known, set mask and logits
                 gt_mask = binary_segmentations[i]
+                # Smooth the ground truth mask before using as prompt
+                if sigma_xy > 0:
+                    gt_mask = gaussian_filter(gt_mask.astype(float), sigma=sigma_xy)
+                    gt_mask = (gt_mask > 0.5).astype(gt_mask.dtype if gt_mask.dtype != float else np.uint8)
                 # predicted_mask = gt_mask
                 # predicted_logits = (gt_mask * 20.0) - 10.0  # large positive where mask=1, large neg where mask=0
                 predicted_mask, predicted_logits = self._predict_mask(
@@ -117,11 +122,16 @@ class CustomMEDSAM2():
                     reverse=reverse
                 )
                 if predicted_mask is None or predicted_logits is None:
-                    print(f"Warning: Prediction failed at frame {i}. Using previous mask from frame {prev_idx} as fallback.")
-
-                    # Fallback: use previous mask
-                    predicted_mask = output_masks_binary[prev_idx]
-                    predicted_logits = output_masks_logit[prev_idx]
+                    print(f"Warning: Prediction failed at frame {i}. Using ground truth mask as fallback.")
+                    # Fallback: use ground truth mask
+                    predicted_mask = gt_mask
+                    predicted_logits = (gt_mask.astype(float) * 20.0) - 10.0
+                
+                if isinstance(predicted_logits, torch.Tensor):
+                    predicted_logits = predicted_logits.cpu().numpy()
+                if isinstance(predicted_mask, torch.Tensor):
+                    predicted_mask = predicted_mask.cpu().numpy()
+                predicted_mask = predicted_mask.astype(np.uint8)
 
             else:
                 # otherwise, predict current mask using previous frame
@@ -132,27 +142,33 @@ class CustomMEDSAM2():
                 if prev_idx < 0 or prev_idx >= n_frames or output_masks_binary[prev_idx] is None:
                     predicted_mask = np.full(mask_shape, np.nan)
                     predicted_logits = np.full(mask_shape, np.nan)
+                else:
+                    # Smooth the previous frame's mask before using as prompt
+                    prev_mask = output_masks_binary[prev_idx]
+                    if sigma_xy > 0:
+                        prev_mask = gaussian_filter(prev_mask.astype(float), sigma=sigma_xy)
+                        prev_mask = (prev_mask > 0.5).astype(prev_mask.dtype if prev_mask.dtype != float else np.uint8)
+                    
+                    predicted_mask, predicted_logits = self._predict_mask(
+                        predictor,
+                        inference_state,
+                        i,
+                        prev_mask, 
+                        0,
+                        reverse=reverse
+                    )
+                    if predicted_mask is None or predicted_logits is None:
+                        print(f"Warning: Prediction failed at frame {i}. Using previous mask from frame {prev_idx} as fallback.")
 
-                predicted_mask, predicted_logits = self._predict_mask(
-                    predictor,
-                    inference_state,
-                    i,
-                    output_masks_binary[prev_idx], 
-                    0,
-                    reverse=reverse
-                )
-                if predicted_mask is None or predicted_logits is None:
-                    print(f"Warning: Prediction failed at frame {i}. Using previous mask from frame {prev_idx} as fallback.")
+                        # Fallback: use previous mask
+                        predicted_mask = output_masks_binary[prev_idx]
+                        predicted_logits = output_masks_logit[prev_idx]
 
-                    # Fallback: use previous mask
-                    predicted_mask = output_masks_binary[prev_idx]
-                    predicted_logits = output_masks_logit[prev_idx]
-
-                if isinstance(predicted_logits, torch.Tensor):
-                    predicted_logits = predicted_logits.cpu().numpy()
-                if isinstance(predicted_mask, torch.Tensor):
-                    predicted_mask = predicted_mask.cpu().numpy()
-                predicted_mask = predicted_mask.astype(np.uint8)
+                    if isinstance(predicted_logits, torch.Tensor):
+                        predicted_logits = predicted_logits.cpu().numpy()
+                    if isinstance(predicted_mask, torch.Tensor):
+                        predicted_mask = predicted_mask.cpu().numpy()
+                    predicted_mask = predicted_mask.astype(np.uint8)
 
             output_masks_binary[i] = np.squeeze(predicted_mask)
             output_masks_logit[i] = np.squeeze(predicted_logits)
@@ -173,8 +189,8 @@ class CustomMEDSAM2():
             output_masks: 3D numpy matrix shape (z,x,y) that for each pixel defines if it's inside (1) or outside (0) a mask. 
                 Elements in array will be NaN for slices with no predictions.
         """
-        mask_binary_forward, mask_logit_forward = self._propagate_single_direction(image_dataset_folder_path, binary_segmentations)
-        mask_binary_backward, mask_logit_backward = self._propagate_single_direction(image_dataset_folder_path, binary_segmentations, reverse=True)
+        mask_binary_forward, mask_logit_forward = self._propagate_single_direction(image_dataset_folder_path, binary_segmentations, reverse=False, sigma_xy=sigma_xy)
+        mask_binary_backward, mask_logit_backward = self._propagate_single_direction(image_dataset_folder_path, binary_segmentations, reverse=True, sigma_xy=sigma_xy)
         
         # Get keyframe indices for distance-weighted fusion
         keyframe_indices = sorted(self._get_keyframe_indices_from_sparse_segmentations(binary_segmentations))
